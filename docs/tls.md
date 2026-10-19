@@ -1,5 +1,7 @@
 # TLS Support in `amqpprox`
 
+> Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
+
 `amqpprox` can be configured to use TLS for (client => proxy) ingress - incoming AMQP from client, and (proxy => broker) egress - outgoing AMQP to broker, connections.
 Some configuration options are shared between these two scenarios, and some differ. This document describes the available configuration parameters.
 

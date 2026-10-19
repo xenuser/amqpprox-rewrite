@@ -1,3 +1,4 @@
+# Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
 include("${BUILD_FLAVOUR_DIR}/tests.pre.cmake" OPTIONAL)
 
 include_directories(.)

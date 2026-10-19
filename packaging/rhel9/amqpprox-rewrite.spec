@@ -60,8 +60,8 @@ getent passwd amqpprox >/dev/null || useradd -r -g amqpprox -d / -s /sbin/nologi
 %systemd_postun_with_restart amqpprox-rewrite.service
 
 %files
-%license LICENSE
-%doc README.md docs/legacy-rewrite.md RHEL9.md
+%license LICENSE COPYRIGHT
+%doc README.md MODIFICATIONS.md docs/legacy-rewrite.md RHEL9.md
 %{_bindir}/amqpprox
 %{_bindir}/amqpprox_ctl
 %{_libexecdir}/amqpprox-apply-config

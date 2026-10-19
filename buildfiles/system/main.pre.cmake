@@ -1,3 +1,4 @@
+# Adapted from buildfiles/conan by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
 message(STATUS "** Using system packages")
 
 if(NOT CMAKE_BUILD_TYPE)

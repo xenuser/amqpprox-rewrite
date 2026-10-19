@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+# SPDX-License-Identifier: Apache-2.0
 """Apply startup-only control commands. No shell execution; fail on any reply.
 The allowed setters return an empty response on success in this checkout.
 """

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Exercise a running amqpprox against an existing RabbitMQ 4.3 cluster.
 No containers. Uses only uniquely named test queues/exchanges and removes them.
 See README.md in this directory for isolated test-vhost provisioning.

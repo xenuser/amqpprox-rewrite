@@ -1,3 +1,4 @@
+// Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
 /*
 ** Copyright 2020 Bloomberg Finance L.P.
 **

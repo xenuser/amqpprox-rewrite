@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 #ifndef BLOOMBERG_AMQPPROX_REWRITE
 #define BLOOMBERG_AMQPPROX_REWRITE
 

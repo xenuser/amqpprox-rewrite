@@ -1,5 +1,7 @@
 # Connection establishment in `amqpprox`
 
+> Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
+
 The core feature of `amqpprox` is the ability to forward incoming client connections to a RabbitMQ broker based on the vhost specified as part of the initial AMQP handshake. This document explains the full handshake procedure.
 
 ## Overview

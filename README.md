@@ -1,7 +1,11 @@
 #  amqpprox
 
+> Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
+
 amqpprox is an AMQP 0.9.1 proxy server, it is designed for use in front of an
 AMQP 0.9.1 compliant message queue broker such as RabbitMQ.
+
+See [MODIFICATIONS.md](MODIFICATIONS.md) for the complete file-by-file change record.
 
 ## Legacy RabbitMQ migration support in this fork
 

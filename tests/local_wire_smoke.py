@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Real proxy sockets against a tiny scripted broker, not a RabbitMQ substitute.
 Runs plain AMQP and TLS on both legs. Requires Python3, openssl and Linux proxy.
 """

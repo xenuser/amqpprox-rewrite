@@ -1,3 +1,4 @@
+# Modified by the amqpprox-rewrite fork on 2026-10-19; see MODIFICATIONS.md.
 UNAME_OVERRIDE ?= `uname`
 BUILD_PARALLELISM ?= `nproc`
 BUILDDIR ?= build/$(UNAME_OVERRIDE)
