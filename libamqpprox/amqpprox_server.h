@@ -16,6 +16,7 @@
 #ifndef BLOOMBERG_AMQPPROX_SERVER
 #define BLOOMBERG_AMQPPROX_SERVER
 
+#include <amqpprox_rewrite.h>
 #include <amqpprox_authinterceptinterface.h>
 #include <amqpprox_connectionselectorinterface.h>
 #include <amqpprox_dnsresolver.h>
@@ -60,6 +61,7 @@ class Server {
     std::mutex                      d_mutex;
     std::shared_ptr<HostnameMapper> d_hostnameMapper;
     std::string                     d_localHostname;
+    const RewriteConfig             d_rewriteConfig;
     std::shared_ptr<AuthInterceptInterface> d_authIntercept;
     DataRateLimitManager                   *d_limitManager;  // HELD NOT OWNED
 
@@ -67,7 +69,8 @@ class Server {
     Server(ConnectionSelectorInterface *selector,
            EventSource                 *eventSource,
            BufferPool                  *bufferPool,
-           DataRateLimitManager        *limitManager);
+           DataRateLimitManager        *limitManager,
+           const RewriteConfig &rewriteConfig = {});
 
     ~Server();
 

@@ -3,6 +3,32 @@
 amqpprox is an AMQP 0.9.1 proxy server, it is designed for use in front of an
 AMQP 0.9.1 compliant message queue broker such as RabbitMQ.
 
+## Legacy RabbitMQ migration support in this fork
+
+This fork adds opt-in rewriting for legacy AMQP 0.9.1 clients:
+
+- Translate an exact client vhost (including hard-coded `/`) to a destination vhost.
+- Replace explicit `x-queue-type=classic`, or inject a missing type, with `quorum`
+  for compatible active declarations on matching connections.
+- Use the existing AMQP or AMQPS ingress/egress support and backend load balancing.
+
+```sh
+amqpprox --listenPort 5673 --destinationDNS new-rabbitmq.example.com --destinationPort 5672 \
+  --rewriteVhostFrom / --rewriteVhostTo customer-a/legacy-app \
+  --rewriteClassicQueuesToQuorum
+```
+
+Point the application at the proxy while retaining its original vhost. Only
+named, durable, non-exclusive, non-auto-delete queues qualify for conversion.
+Existing queues/messages are not migrated. All rewriting is disabled by default;
+one source-to-destination mapping is supported per proxy process.
+
+Read the [migration guide and considerations](docs/legacy-rewrite.md), including
+AMQPS configuration and the inherited outbound TLS hostname/SNI limitation.
+Administrators can use the [container-free RabbitMQ 4.3 test application and
+runbook](tests/rabbitmq43/README.md) against an existing server. For RHEL 9, see
+the [RPM build tooling and service configuration](packaging/rhel9/README.md).
+
 ## 
 [![OpenSSF
 Scorecard](https://api.securityscorecards.dev/projects/github.com/bloomberg/amqpprox/badge)](https://api.securityscorecards.dev/projects/github.com/bloomberg/amqpprox)

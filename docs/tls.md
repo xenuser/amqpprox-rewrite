@@ -75,7 +75,7 @@ ECDHE-ECDSA-AES256-GCM-SHA384
 ## Ingress configuration
 
 Inbound TLS sessions can be configured by enabling a 'secure' port to listen on:
-`amqpprox_ctl /tmp/amqpprox START_SECURE 5671`
+`amqpprox_ctl /tmp/amqpprox LISTEN START_SECURE 5671`
 
 A few parameters are only relevant to server connections.
 

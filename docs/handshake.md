@@ -77,3 +77,12 @@ After `Connection.OpenOk` is sent by `RabbitMQ`, this frame and all further traf
 1. Connection.Secure/SecureOK are not supported by `amqpprox`
 
  > Authentication using PLAIN is passed through to the destination broker. TLS authentication (terminated at the proxy) can be configured as well. See `docs/tls.md`
+
+## Optional rewriting in this fork
+
+When `--rewriteVhostTo` is configured, matching incoming vhosts are replaced
+before routing/authentication and outgoing Connection.Open. With
+`--rewriteClassicQueuesToQuorum`, ingress Queue.Declare frames on those
+connections are also inspected and selectively rewritten after connection
+establishment. Other traffic keeps the forwarding behavior described above.
+See [legacy-rewrite.md](legacy-rewrite.md) for scope and limitations.

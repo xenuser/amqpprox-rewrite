@@ -13,6 +13,7 @@
 ** See the License for the specific language governing permissions and
 ** limitations under the License.
 */
+#include <amqpprox_rewrite.h>
 #include <amqpprox_flowtype.h>
 #include <amqpprox_packetprocessor.h>
 
@@ -46,6 +47,10 @@ PacketProcessor::PacketProcessor(SessionState &state, Connector &connector)
 
 void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
 {
+    d_ingressWriteBuffer = Buffer();
+    d_egressWriteBuffer = Buffer();
+    d_remainingBuffer = Buffer();
+    d_rewritten.reset();
     std::size_t remaining = readBuffer.offset();
     const void *nextFrame = readBuffer.originalPtr();
 
@@ -85,6 +90,26 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
 
         ++frameCount;
 
+        if (direction == FlowType::INGRESS &&
+            d_connector.state() == Connector::State::OPEN &&
+            d_connector.rewriteQueues()) {
+            auto rewritten = rewriteQueueDeclare(frame, d_connector.frameMax());
+            if (!rewritten.empty()) {
+                if (!d_rewritten) {
+                    d_rewritten = std::make_shared<std::vector<uint8_t>>();
+                    const auto *begin = static_cast<const uint8_t *>(readBuffer.originalPtr());
+                    const auto *current = static_cast<const uint8_t *>(currFrame);
+                    d_rewritten->insert(d_rewritten->end(), begin, current);
+                }
+                d_rewritten->insert(d_rewritten->end(), rewritten.begin(), rewritten.end());
+            }
+            else if (d_rewritten) {
+                const auto *begin = static_cast<const uint8_t *>(currFrame);
+                const auto *end = static_cast<const uint8_t *>(nextFrame);
+                d_rewritten->insert(d_rewritten->end(), begin, end);
+            }
+        }
+
         if (1 == frame.type && d_connector.state() != Connector::State::OPEN) {
             Method method;
             Method::decode(&method, frame.payload, frame.length);
@@ -119,7 +144,9 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
                   << " Passthrough " << byteCount << " bytes";
 
         if (direction == FlowType::INGRESS) {
-            d_egressWriteBuffer  = Buffer(readBuffer.originalPtr(), byteCount);
+            d_egressWriteBuffer = d_rewritten
+                ? Buffer(d_rewritten->data(), d_rewritten->size())
+                : Buffer(readBuffer.originalPtr(), byteCount);
             d_ingressWriteBuffer = Buffer();
             d_state.incrementIngressTotals(frameCount, byteCount);
         }

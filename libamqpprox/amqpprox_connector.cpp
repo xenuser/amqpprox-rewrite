@@ -29,6 +29,7 @@
 #include <amqpprox_reply.h>
 #include <amqpprox_sessionstate.h>
 
+#include <algorithm>
 #include <iostream>
 #include <string_view>
 
@@ -105,7 +106,8 @@ const Buffer legacyProtocolHeader(Constants::legacyProtocolHeader(),
 Connector::Connector(SessionState    *sessionState,
                      EventSource     *eventSource,
                      BufferPool      *bufferPool,
-                     std::string_view localHostname)
+                     std::string_view localHostname,
+                     const RewriteConfig &rewriteConfig)
 : d_state(State::AWAITING_PROTOCOL_HEADER)
 , d_synthesizedStart(ConnectorUtil::synthesizedStart())
 , d_synthesizedTune(ConnectorUtil::synthesizedTune())
@@ -117,7 +119,9 @@ Connector::Connector(SessionState    *sessionState,
 , d_sendToIngressSide(false)
 , d_reconnection(false)
 , d_localHostname(localHostname)
+, d_rewriteConfig(rewriteConfig)
 {
+    d_rewriteConfig.validate();
 }
 
 void Connector::receive(const Buffer &buffer)
@@ -183,6 +187,14 @@ void Connector::receive(const Method &method, FlowType direction)
     case State::AWAITING_OPEN: {
         decodeMethod(&d_open, method, methodPayload, direction);
 
+        if (d_rewriteConfig.matches(d_open.virtualHost())) {
+            LOG_INFO << "Rewriting vhost " << d_open.virtualHost()
+                     << " -> " << d_rewriteConfig.targetVhost;
+            d_open.setVirtualHost(d_rewriteConfig.targetVhost);
+            d_rewriteQueues = d_rewriteConfig.quorumQueues;
+        }
+        // Routing, auth intercept, limits, and statistics use the effective
+        // broker vhost, consistently with the outgoing Connection.Open.
         d_sessionState_p->setVirtualHost(d_open.virtualHost());
         d_eventSource_p->connectionVhostEstablished().emit(
             d_sessionState_p->id(), d_open.virtualHost());
@@ -332,6 +344,13 @@ void Connector::synthesizeCustomCloseError(bool             sendToIngressSide,
 {
     synthesizeMessage(
         d_close, sendToIngressSide, code, text, classId, methodId);
+}
+
+std::size_t Connector::frameMax() const
+{
+    const auto negotiated = d_tuneOk.frameMax();
+    return negotiated == 0 ? Frame::getMaxFrameSize()
+                           : std::min<std::size_t>(negotiated, Frame::getMaxFrameSize());
 }
 
 Buffer Connector::outBuffer()

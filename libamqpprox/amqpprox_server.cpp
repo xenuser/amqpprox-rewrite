@@ -62,7 +62,8 @@ void initTLS(boost::asio::ssl::context &context)
 Server::Server(ConnectionSelectorInterface *selector,
                EventSource                 *eventSource,
                BufferPool                  *bufferPool,
-               DataRateLimitManager        *limitManager)
+               DataRateLimitManager        *limitManager,
+               const RewriteConfig &rewriteConfig)
 : d_ioContext()
 , d_ingressTlsContext(boost::asio::ssl::context::tlsv12)
 , d_egressTlsContext(boost::asio::ssl::context::tlsv12)
@@ -77,6 +78,7 @@ Server::Server(ConnectionSelectorInterface *selector,
 , d_mutex()
 , d_hostnameMapper()
 , d_localHostname(boost::asio::ip::host_name())
+, d_rewriteConfig(rewriteConfig)
 , d_authIntercept(std::make_shared<DefaultAuthIntercept>(d_ioContext))
 , d_limitManager(limitManager)
 {
@@ -223,7 +225,8 @@ void Server::doAccept(int port, bool secure)
                                               d_localHostname,
                                               d_authIntercept,
                                               secure,
-                                              d_limitManager);
+                                              d_limitManager,
+                                              d_rewriteConfig);
 
                 {
                     std::lock_guard<std::mutex> lg(d_mutex);

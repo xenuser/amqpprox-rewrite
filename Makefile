@@ -60,3 +60,15 @@ docs:
 	doxygen Doxygen.config
 
 .PHONY: test build setup init all clean docker-setup docker-init docker-build docker-shell docker-integration-tests docs
+
+# Native distro-package build (no Conan or container required).
+CMAKE ?= cmake
+NATIVE_BUILDDIR ?= build/system
+.PHONY: native native-test rpm-rhel9
+native:
+	$(CMAKE) -S . -B $(NATIVE_BUILDDIR) -DBUILD_FLAVOUR=system -DCMAKE_BUILD_TYPE=RelWithDebInfo
+	$(CMAKE) --build $(NATIVE_BUILDDIR) --parallel $(BUILD_PARALLELISM)
+native-test: native
+	$(NATIVE_BUILDDIR)/bin/amqpprox_tests
+rpm-rhel9:
+	CMAKE="$(CMAKE)" bash packaging/rhel9/build-rpm.sh

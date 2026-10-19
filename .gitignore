@@ -7,3 +7,8 @@ logs
 generated_docs/
 .vscode
 **/.DS_Store
+
+# Local verification artifacts and test environments
+__pycache__/
+.venv/
+rabbitmq43-results*.json

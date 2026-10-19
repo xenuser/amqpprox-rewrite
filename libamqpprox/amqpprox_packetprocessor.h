@@ -20,6 +20,9 @@
 #include <amqpprox_flowtype.h>
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace Bloomberg {
 namespace amqpprox {
@@ -39,6 +42,7 @@ class PacketProcessor {
     Buffer        d_ingressWriteBuffer;
     Buffer        d_egressWriteBuffer;
     Buffer        d_remainingBuffer;
+    std::shared_ptr<std::vector<uint8_t>> d_rewritten;
 
   public:
     PacketProcessor(SessionState &state, Connector &connector);
@@ -51,6 +55,7 @@ class PacketProcessor {
      */
     void process(FlowType direction, const Buffer &readBuffer);
 
+    std::shared_ptr<std::vector<uint8_t>> rewrittenStorage() const { return d_rewritten; }
     inline Buffer remaining();
     inline Buffer ingressWrite();
     inline Buffer egressWrite();

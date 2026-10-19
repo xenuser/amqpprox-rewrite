@@ -36,6 +36,7 @@ add_executable(amqpprox_tests
     amqpprox_partitionpolicystore.t.cpp
     amqpprox_proxyprotocolheaderv1.t.cpp
     amqpprox_resourcemapper.t.cpp
+    amqpprox_rewrite.t.cpp
     amqpprox_robinbackendselector.t.cpp
     amqpprox_session.t.cpp
     amqpprox_sessionstate.t.cpp

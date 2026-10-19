@@ -1,0 +1,29 @@
+[Unit]
+Description=AMQP proxy with legacy vhost and queue rewriting
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=amqpprox
+Group=amqpprox
+EnvironmentFile=/etc/sysconfig/amqpprox-rewrite
+RuntimeDirectory=amqpprox
+RuntimeDirectoryMode=0750
+LogsDirectory=amqpprox
+LogsDirectoryMode=0750
+UMask=0077
+ExecStart=/usr/bin/amqpprox --controlSocket /run/amqpprox/control --logDirectory /var/log/amqpprox $AMQPPROX_OPTIONS
+ExecStartPost=/usr/libexec/amqpprox-apply-config /run/amqpprox/control /etc/amqpprox/control.conf
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=45
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/amqpprox /var/log/amqpprox
+
+[Install]
+WantedBy=multi-user.target

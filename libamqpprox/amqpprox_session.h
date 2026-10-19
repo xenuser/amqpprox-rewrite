@@ -16,6 +16,7 @@
 #ifndef BLOOMBERG_AMQPPROX_SESSION
 #define BLOOMBERG_AMQPPROX_SESSION
 
+#include <amqpprox_rewrite.h>
 #include <amqpprox_authinterceptinterface.h>
 #include <amqpprox_backend.h>
 #include <amqpprox_buffer.h>
@@ -101,7 +102,8 @@ class Session : public std::enable_shared_from_this<Session> {
             std::string_view                               localHostname,
             const std::shared_ptr<AuthInterceptInterface> &authIntercept,
             bool                                           isIngressSecure,
-            DataRateLimitManager                          *limitManager);
+            DataRateLimitManager                          *limitManager,
+            const RewriteConfig &rewriteConfig = {});
 
     ~Session();
 
@@ -241,7 +243,8 @@ class Session : public std::enable_shared_from_this<Session> {
      */
     void handleWriteData(FlowType                    direction,
                          MaybeSecureSocketAdaptor<> &writeSocket,
-                         Buffer                      data);
+                         Buffer                      data,
+                         std::shared_ptr<std::vector<uint8_t>> owner = {});
 
     /**
      * \brief Handle errors on an established connection

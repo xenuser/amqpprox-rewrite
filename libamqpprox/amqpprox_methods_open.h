@@ -33,6 +33,8 @@ class Open {
     std::string d_virtualHost{};
 
   public:
+    void setVirtualHost(const std::string &value) { d_virtualHost = value; }
+
     const std::string &virtualHost() const { return d_virtualHost; }
 
     /**

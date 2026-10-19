@@ -87,6 +87,7 @@ int main(int argc, char *argv[])
     using namespace Bloomberg::amqpprox;
     namespace po = boost::program_options;
 
+    RewriteConfig rewriteConfig;
     std::string logDirectory;
     std::string controlSocket;
     uint32_t    cleanupIntervalMs;
@@ -117,6 +118,15 @@ int main(int argc, char *argv[])
         "destinationDNS",
         po::value<std::string>(&easyDestinationDNS)->default_value(""),
         "Simple config mode: destination DNS address")(
+        "rewriteVhostFrom",
+        po::value<std::string>(&rewriteConfig.sourceVhost)->default_value("/"),
+        "Exact client vhost to rewrite (requires rewriteVhostTo)")(
+        "rewriteVhostTo",
+        po::value<std::string>(&rewriteConfig.targetVhost),
+        "Destination vhost; routing/auth/limits use this name")(
+        "rewriteClassicQueuesToQuorum",
+        po::bool_switch(&rewriteConfig.quorumQueues),
+        "Rewrite missing/classic queue types for matching connections only")(
         "consoleVerbosity,v",
         po::value<uint16_t>(&consoleVerbosity)->default_value(0),
         "Default console logging verbosity (0 = No output through to 5 = "
@@ -157,6 +167,19 @@ int main(int argc, char *argv[])
     if (consoleVerbosity > 5) {
         std::cout << "Console log verbosity must be between 0 and 5\n";
         return 3;
+    }
+
+    try {
+        rewriteConfig.validate();
+        if ((variablesMap.count("rewriteVhostFrom") && !variablesMap["rewriteVhostFrom"].defaulted()) ||
+            variablesMap.count("rewriteVhostTo")) {
+            if (rewriteConfig.targetVhost.empty())
+                throw std::invalid_argument("--rewriteVhostTo must be nonempty");
+        }
+    }
+    catch (const std::invalid_argument &e) {
+        std::cerr << e.what() << "\n";
+        return 4;
     }
 
     Logging::start(logDirectory);
@@ -200,7 +223,7 @@ int main(int argc, char *argv[])
     DataRateLimitManager dataRateLimitManager;
 
     Server server(
-        &connectionSelector, &eventSource, &bufferPool, &dataRateLimitManager);
+        &connectionSelector, &eventSource, &bufferPool, &dataRateLimitManager, rewriteConfig);
     Control control(&server, &eventSource, controlSocket);
 
     // Set up the backend selector store

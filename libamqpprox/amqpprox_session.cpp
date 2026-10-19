@@ -134,7 +134,8 @@ Session::Session(
     std::string_view                                   localHostname,
     const std::shared_ptr<AuthInterceptInterface>     &authIntercept,
     bool                                               isIngressSecure,
-    DataRateLimitManager                              *limitManager)
+    DataRateLimitManager                              *limitManager,
+    const RewriteConfig &rewriteConfig)
 : d_ioContext(ioContext)
 , d_serverSocket(serverSocket)
 , d_clientSocket(clientSocket)
@@ -145,7 +146,7 @@ Session::Session(
 , d_serverWaterMark(0)
 , d_clientWaterMark(0)
 , d_sessionState(hostnameMapper)
-, d_connector(&d_sessionState, eventSource, bufferPool, localHostname)
+, d_connector(&d_sessionState, eventSource, bufferPool, localHostname, rewriteConfig)
 , d_connectionSelector_p(connectionSelector)
 , d_eventSource_p(eventSource)
 , d_bufferPool_p(bufferPool)
@@ -710,10 +711,11 @@ void Session::backendDisconnect()
 
 void Session::handleWriteData(FlowType                    direction,
                               MaybeSecureSocketAdaptor<> &writeSocket,
-                              Buffer                      data)
+                              Buffer                      data,
+                              std::shared_ptr<std::vector<uint8_t>> owner)
 {
     auto self(shared_from_this());
-    auto writeHandler = [this, self, direction](error_code ec, std::size_t) {
+    auto writeHandler = [this, self, direction, owner](error_code ec, std::size_t) {
         BOOST_LOG_SCOPED_THREAD_ATTR(
             "Vhost",
             boost::log::attributes::constant<std::string>(
@@ -880,7 +882,7 @@ void Session::handleData(FlowType direction)
         else if (egressWrite.size()) {
             handleWriteData(isOpen ? FlowType::INGRESS : FlowType::EGRESS,
                             *d_clientSocket,
-                            egressWrite);
+                            egressWrite, processor.rewrittenStorage());
         }
         else {
             readData(direction);

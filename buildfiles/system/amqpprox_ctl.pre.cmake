@@ -1,0 +1,1 @@
+set(AMQPPROX_CTL_LIBS Boost::boost OpenSSL::SSL OpenSSL::Crypto ${CMAKE_THREAD_LIBS_INIT})

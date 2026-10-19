@@ -16,6 +16,7 @@
 #ifndef BLOOMBERG_AMQPPROX_CONNECTOR
 #define BLOOMBERG_AMQPPROX_CONNECTOR
 
+#include <amqpprox_rewrite.h>
 #include <amqpprox_buffer.h>
 #include <amqpprox_bufferhandle.h>
 #include <amqpprox_fieldtable.h>
@@ -98,6 +99,8 @@ class Connector {
     bool                  d_sendToIngressSide;
     bool                  d_reconnection;
     std::string           d_localHostname;
+    const RewriteConfig   d_rewriteConfig;
+    bool                  d_rewriteQueues = false;
 
     template <typename T>
     void sendResponse(const T &response, bool sendToIngressSide);
@@ -113,7 +116,11 @@ class Connector {
     Connector(SessionState    *sessionState,
               EventSource     *eventSource,
               BufferPool      *bufferPool,
-              std::string_view localHostname);
+              std::string_view localHostname,
+              const RewriteConfig &rewriteConfig = {});
+
+    bool rewriteQueues() const { return d_rewriteQueues; }
+    std::size_t frameMax() const;
 
     /**
      * \return state of the connection
