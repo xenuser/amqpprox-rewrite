@@ -121,6 +121,10 @@ class Connector {
               const RewriteConfig &rewriteConfig = {});
 
     bool rewriteQueues() const { return d_rewriteQueues; }
+    bool passThroughUnconvertibleQueues() const
+    {
+        return d_rewriteConfig.passThroughUnconvertible;
+    }
     std::size_t frameMax() const;
 
     /**
@@ -185,6 +189,23 @@ class Connector {
                                     std::string_view text,
                                     uint16_t         classId  = 0,
                                     uint16_t         methodId = 0);
+
+    /**
+     * \brief Start a graceful close with custom ERROR code and text: send
+     * AMQP connection Close to client/server based on specified direction and
+     * await its CloseOk, as `synthesizeClose` does
+     * \param sendToIngressSide true for communicating with client and false
+     * for communicating with server
+     * \param code custom error code
+     * \param text custom error text, truncated to the AMQP short string limit
+     * \param classId class id of the failing method
+     * \param methodId method id of the failing method
+     */
+    void synthesizeCloseWithReason(bool             sendToIngressSide,
+                                   uint16_t         code,
+                                   std::string_view text,
+                                   uint16_t         classId  = 0,
+                                   uint16_t         methodId = 0);
 
     /**
      * \brief Synthesize AMQP protocol header buffer, which will eventually be

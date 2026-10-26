@@ -8,8 +8,9 @@ RabbitMQ's management HTTP API as well as AMQP access through the proxy.
 
 The C++ build and local regression suite are exercised in Ubuntu 24.04 WSL.
 Real proxy socket smoke tests passed for plain AMQP and AMQPS on both legs
-against a scripted broker, including fragmentation and the packaged startup
-configuration helper. This is not a RabbitMQ server test.
+against a scripted broker, including fragmentation, graceful rejection,
+pass-through mode and the packaged startup configuration helper. This is not a
+RabbitMQ server test.
 
 Live RabbitMQ 4.3 and AMQPS against RabbitMQ have **not** been run: Docker failed to start, and no enterprise broker endpoint or test
 credentials were supplied. RHEL RPM tooling is supplied but has not been built
@@ -147,14 +148,17 @@ portability; this does not replace testing the actual legacy .NET/client library
 | Reject/requeue and ACK | Redelivery and successful final acknowledgement |
 | Explicit quorum and stream | Types retained |
 | Nonmatching control vhost | Classic remains classic in control vhost |
-| Non-durable, exclusive, auto-delete | Connection/channel failure; no queue created |
+| Non-durable, exclusive, auto-delete, server-named | Proxy sends Connection.Close 540 naming the reason; no queue created |
+| `x-max-priority` | Proxy sends Connection.Close 540 naming the argument; no queue created |
+| `x-queue-mode`, `x-queue-version`, `x-queue-master-locator` | Dropped; quorum queue created, other arguments kept |
 | Existing classic queue | Broker returns 406; queue remains classic |
 | Optional disabled proxy | Explicit classic remains classic |
 | Optional vhost-only proxy | Vhost changes but explicit classic remains classic |
+| Optional pass-through proxy | Exclusive reply queue forwarded unchanged (classic); durable queue still quorum |
 
 Exit code 0 means all executed assertions passed; 1 means test failure; 2 means
 configuration failure. The JSON report records the server version, online nodes,
-quorum members and test/skip counts without credentials. Two optional regression
+quorum members and test/skip counts without credentials. Three optional regression
 cases are skipped unless you provide the ports below. Review skipped cases;
 a partial suite is not a complete production acceptance.
 
@@ -174,9 +178,15 @@ build/system/bin/amqpprox --controlSocket /tmp/amqpprox-disabled --logDirectory 
 build/system/bin/amqpprox --controlSocket /tmp/amqpprox-vhost-only --logDirectory logs-vhost-only \
   --listenPort 5675 --destinationDNS rabbit1.example.com --destinationPort 5672 \
   --rewriteVhostTo rewrite-test-target
+# Quorum rewriting that forwards unconvertible declarations unchanged.
+build/system/bin/amqpprox --controlSocket /tmp/amqpprox-passthrough --logDirectory logs-passthrough \
+  --listenPort 5676 --destinationDNS rabbit1.example.com --destinationPort 5672 \
+  --rewriteVhostTo rewrite-test-target --rewriteClassicQueuesToQuorum \
+  --passThroughUnconvertibleQueues
 ```
 
-Append `--passthrough-port 5674 --vhost-only-port 5675` to run all cases. For a
+Append `--passthrough-port 5674 --vhost-only-port 5675
+--unconvertible-passthrough-port 5676` to run all cases. For a
 TLS test, configure these listeners with the same TLS credentials and use the
 same client flags. Each process needs a distinct control socket and log folder.
 
@@ -221,7 +231,10 @@ python3 tests/local_wire_smoke.py build/system/bin/amqpprox
 ```
 
 This starts ephemeral loopback listeners and the compiled proxy, then checks
-unmodified AMQP, rewritten AMQP, and rewritten AMQPS on both legs. A scripted
-broker validates the actual outgoing vhost and queue arguments. Temporary
+unmodified AMQP, rewritten AMQP, and rewritten AMQPS on both legs. It also
+checks that a rejected declaration produces Connection.Close 540 to the client
+followed by a normal close of the broker side (AMQP and AMQPS), and that
+`--passThroughUnconvertibleQueues` forwards an exclusive declaration unchanged.
+A scripted broker validates the actual outgoing vhost and queue arguments. Temporary
 certificates and processes are cleaned up. It does not implement or validate
 RabbitMQ queue semantics, replication, authentication or application recovery.

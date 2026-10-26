@@ -52,6 +52,7 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
     d_egressWriteBuffer = Buffer();
     d_remainingBuffer = Buffer();
     d_rewritten.reset();
+    d_rewriteError.reset();
     std::size_t remaining = readBuffer.offset();
     const void *nextFrame = readBuffer.originalPtr();
 
@@ -94,7 +95,22 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
         if (direction == FlowType::INGRESS &&
             d_connector.state() == Connector::State::OPEN &&
             d_connector.rewriteQueues()) {
-            auto rewritten = rewriteQueueDeclare(frame, d_connector.frameMax());
+            std::vector<uint8_t> rewritten;
+            try {
+                rewritten = rewriteQueueDeclare(
+                    frame,
+                    d_connector.frameMax(),
+                    d_connector.passThroughUnconvertibleQueues());
+            }
+            catch (const QueueRewriteError &error) {
+                // Forward what preceded the rejected frame; discard the rest.
+                d_rewriteError = error;
+                --frameCount;
+                remaining += static_cast<const uint8_t *>(nextFrame) -
+                             static_cast<const uint8_t *>(currFrame);
+                nextFrame = currFrame;
+                break;
+            }
             if (!rewritten.empty()) {
                 if (!d_rewritten) {
                     d_rewritten = std::make_shared<std::vector<uint8_t>>();
@@ -158,7 +174,8 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
         }
     }
 
-    d_remainingBuffer = Buffer(nextFrame, remaining);
+    d_remainingBuffer =
+        d_rewriteError ? Buffer() : Buffer(nextFrame, remaining);
 }
 
 }

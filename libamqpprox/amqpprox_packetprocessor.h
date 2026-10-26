@@ -19,10 +19,12 @@
 
 #include <amqpprox_buffer.h>
 #include <amqpprox_flowtype.h>
+#include <amqpprox_rewrite.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace Bloomberg {
@@ -44,6 +46,7 @@ class PacketProcessor {
     Buffer        d_egressWriteBuffer;
     Buffer        d_remainingBuffer;
     std::shared_ptr<std::vector<uint8_t>> d_rewritten;
+    std::optional<QueueRewriteError>      d_rewriteError;
 
   public:
     PacketProcessor(SessionState &state, Connector &connector);
@@ -57,6 +60,17 @@ class PacketProcessor {
     void process(FlowType direction, const Buffer &readBuffer);
 
     std::shared_ptr<std::vector<uint8_t>> rewrittenStorage() const { return d_rewritten; }
+
+    /**
+     * \return the error that stopped processing at a rejected Queue.Declare.
+     * Frames before it are still in `egressWrite()`; the rejected frame and
+     * everything after it are discarded, so `remaining()` is empty.
+     */
+    const std::optional<QueueRewriteError> &rewriteError() const
+    {
+        return d_rewriteError;
+    }
+
     inline Buffer remaining();
     inline Buffer ingressWrite();
     inline Buffer egressWrite();

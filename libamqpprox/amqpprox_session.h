@@ -35,6 +35,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include <chrono>
+#include <functional>
 #include <iosfwd>
 #include <memory>
 #include <string>
@@ -241,11 +242,27 @@ class Session : public std::enable_shared_from_this<Session> {
      * \param direction specifies direction of the data flow (ingress/egress)
      * \param writeSocket to write the data
      * \param data to be written onto the outgoing socket
+     * \param owner keeps rewritten data alive until the write completes
+     * \param onWritten if set, called after a successful write instead of
+     * re-reading
      */
     void handleWriteData(FlowType                    direction,
                          MaybeSecureSocketAdaptor<> &writeSocket,
                          Buffer                      data,
-                         std::shared_ptr<std::vector<uint8_t>> owner = {});
+                         std::shared_ptr<std::vector<uint8_t>> owner = {},
+                         std::function<void()>       onWritten = {});
+
+    /**
+     * \brief Forward the frames that preceded a rejected Queue.Declare to the
+     * broker, then gracefully close the client connection with the reason
+     * \param error the rejection, carrying the AMQP reply code and text
+     * \param forwarded frames received before the rejected declaration
+     * \param owner keeps rewritten data alive until the write completes
+     */
+    void rejectQueueDeclaration(
+        const QueueRewriteError                     &error,
+        Buffer                                       forwarded,
+        const std::shared_ptr<std::vector<uint8_t>> &owner);
 
     /**
      * \brief Handle errors on an established connection

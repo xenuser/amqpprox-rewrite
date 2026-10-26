@@ -47,17 +47,52 @@ def receive(connection):
     return kind, channel, body
 
 
-def declare(queue_type):
+def declare(queue_type, flags=2, name='jobs'):
     entry = short('x-queue-type') + b'S' + long(queue_type)
-    return b'\x00\x32\x00\x0a\x00\x00' + short('jobs') + b'\x02' + struct.pack('!I', len(entry)) + entry
+    return b'\x00\x32\x00\x0a\x00\x00' + short(name) + bytes([flags]) + struct.pack('!I', len(entry)) + entry
+
+
+def declare_ok(name):
+    return b'\x00\x32\x00\x0b' + short(name) + b'\x00'*8
 
 
 START = b'\x00\x0a\x00\x0a\x00\x09' + b'\x00'*4 + long('PLAIN') + long('en_US')
 TUNE = b'\x00\x0a\x00\x1e' + struct.pack('!HIH', 2047, 131072, 60)
 HEADER = b'AMQP\x00\x00\x09\x01'
+CLOSE = b'\x00\x0a\x00\x32'
+CLOSE_OK = b'\x00\x0a\x00\x33'
+
+# mode -> (proxy flags, client queue name/flags, declaration the broker sees)
+EXCLUSIVE = ('reply', 6)
+MODES = {
+    'disabled': ([], ('jobs', 2), declare('classic')),
+    'convert': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), declare('quorum')),
+    'reject': (['--rewriteClassicQueuesToQuorum'], EXCLUSIVE, None),
+    'passthrough': (['--rewriteClassicQueuesToQuorum', '--passThroughUnconvertibleQueues'],
+                    EXCLUSIVE, declare('classic', 6, 'reply')),
+}
 
 
-def broker(listener, tls_context, target, queue_type):
+def connect(port):
+    # LISTEN returns before the proxy's I/O thread has bound the port.
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            return socket.create_connection(('127.0.0.1', port), timeout=15)
+        except ConnectionRefusedError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.1)
+
+
+def closed(connection):
+    try:
+        return connection.recv(1) == b''
+    except (ssl.SSLEOFError, ConnectionResetError):
+        return True
+
+
+def broker(listener, tls_context, target, mode):
     connection, _ = listener.accept()
     connection.settimeout(15)
     with connection:
@@ -72,14 +107,24 @@ def broker(listener, tls_context, target, queue_type):
             assert receive(connection)[2] == b'\x00\x0a\x00\x28' + short(target) + b'\x00\x00'
             connection.sendall(frame(b'\x00\x0a\x00\x29\x00'))
             assert receive(connection) == (8, 0, b'')
-            assert receive(connection) == (1, 7, declare(queue_type))
+            name = MODES[mode][1][0]
+            if mode == 'reject':
+                # Nothing after the rejected declaration arrives; the proxy
+                # closes this side normally once the client acknowledged.
+                kind, channel, payload = receive(connection)
+                assert (kind, channel, payload[:6]) == (1, 0, CLOSE + b'\x00\xc8'), payload
+                connection.sendall(frame(CLOSE_OK))
+                assert closed(connection)
+                return
+            assert receive(connection) == (1, 7, MODES[mode][2])
             assert receive(connection) == (3, 7, b'body-unchanged')
-            connection.sendall(frame(b'\x00\x32\x00\x0b' + short('jobs') + b'\x00'*8, channel=7))
+            connection.sendall(frame(declare_ok(name), channel=7))
             # Stay alive until client closes, so pending proxy writes complete.
             connection.recv(1)
 
 
-def smoke(binary, directory, tls=False, rewrite=True):
+def smoke(binary, directory, tls=False, mode='convert'):
+    rewrite = mode != 'disabled'
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0)); listener.listen(1); listener.settimeout(20)
         backend_port = listener.getsockname()[1]
@@ -88,7 +133,7 @@ def smoke(binary, directory, tls=False, rewrite=True):
         sock = str(directory / 'control')
         command = [binary, '--controlSocket', sock, '--logDirectory', str(directory / 'logs')]
         if rewrite:
-            command += ['--rewriteVhostFrom', 'VHOST1', '--rewriteVhostTo', 'VHOST2', '--rewriteClassicQueuesToQuorum']
+            command += ['--rewriteVhostFrom', 'VHOST1', '--rewriteVhostTo', 'VHOST2'] + MODES[mode][0]
         cert = str(directory / 'cert.pem'); key = str(directory / 'key.pem')
         context = None
         if tls:
@@ -97,8 +142,7 @@ def smoke(binary, directory, tls=False, rewrite=True):
                             '-keyout', key, '-out', cert], check=True, capture_output=True)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
         with open(directory / 'proxy.log', 'w') as log, concurrent.futures.ThreadPoolExecutor(1) as pool:
-            future = pool.submit(broker, listener, context, 'VHOST2' if rewrite else 'VHOST1',
-                                 'quorum' if rewrite else 'classic')
+            future = pool.submit(broker, listener, context, 'VHOST2' if rewrite else 'VHOST1', mode)
             process = subprocess.Popen(command, stdout=log, stderr=log)
             try:
                 spec = importlib.util.spec_from_file_location('config', pathlib.Path(__file__).resolve().parents[1] / 'packaging/rhel9/apply-config.py')
@@ -113,7 +157,7 @@ def smoke(binary, directory, tls=False, rewrite=True):
                 # Exercise the packaged config parser as well as its socket client.
                 config = directory / 'control.conf'; config.write_text('\n'.join(commands) + '\n')
                 module.apply(sock, module.load_commands(config))
-                connection = socket.create_connection(('127.0.0.1', proxy_port), timeout=15)
+                connection = connect(proxy_port)
                 if tls:
                     ctx = ssl.create_default_context(cafile=cert)
                     connection = ctx.wrap_socket(connection, server_hostname='localhost')
@@ -124,11 +168,24 @@ def smoke(binary, directory, tls=False, rewrite=True):
                     connection.sendall(frame(b'\x00\x0a\x00\x1f' + TUNE[4:]) +
                                        frame(b'\x00\x0a\x00\x28' + short('VHOST1') + b'\x00\x00'))
                     assert receive(connection)[2][:4] == b'\x00\x0a\x00\x29'
-                    data = frame(b'', kind=8) + frame(declare('classic'), channel=7) + frame(b'body-unchanged', channel=7, kind=3)
+                    name, flags = MODES[mode][1]
+                    data = (frame(b'', kind=8) + frame(declare('classic', flags, name), channel=7) +
+                            frame(b'body-unchanged', channel=7, kind=3))
                     # Split within a frame and coalesce neighboring frame types.
                     for chunk in (data[:11], data[11:19], data[19:]):
                         connection.sendall(chunk); time.sleep(0.01)
-                    assert receive(connection) == (1, 7, b'\x00\x32\x00\x0b' + short('jobs') + b'\x00'*8)
+                    if mode == 'reject':
+                        # Connection.Close naming the reason and Queue.Declare.
+                        kind, channel, payload = receive(connection)
+                        assert (kind, channel, payload[:4]) == (1, 0, CLOSE), payload
+                        code, = struct.unpack('!H', payload[4:6])
+                        text = payload[7:7 + payload[6]]
+                        assert struct.unpack('!HH', payload[7 + payload[6]:]) == (50, 10), payload
+                        assert code == 540 and b"queue 'reply' is exclusive" in text, payload
+                        connection.sendall(frame(CLOSE_OK))
+                        assert closed(connection)
+                    else:
+                        assert receive(connection) == (1, 7, declare_ok(name))
                 future.result(timeout=20)
             except Exception:
                 log.flush()
@@ -140,16 +197,18 @@ def smoke(binary, directory, tls=False, rewrite=True):
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait()
-        print(f'PASS real proxy sockets: tls={tls}, rewrite={rewrite}')
+        print(f'PASS real proxy sockets: tls={tls}, mode={mode}')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', help='Path to Linux amqpprox executable')
     args = parser.parse_args()
-    for tls, rewrite in ((False, False), (False, True), (True, True)):
+    cases = ((False, 'disabled'), (False, 'convert'), (True, 'convert'),
+             (False, 'reject'), (True, 'reject'), (False, 'passthrough'))
+    for tls, mode in cases:
         with tempfile.TemporaryDirectory(prefix='amqpprox-wire-') as directory:
-            smoke(str(pathlib.Path(args.binary).resolve()), pathlib.Path(directory), tls, rewrite)
+            smoke(str(pathlib.Path(args.binary).resolve()), pathlib.Path(directory), tls, mode)
     print('WIRE SMOKE PASSED')
 
 

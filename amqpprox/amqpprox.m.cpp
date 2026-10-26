@@ -128,6 +128,11 @@ int main(int argc, char *argv[])
         "rewriteClassicQueuesToQuorum",
         po::bool_switch(&rewriteConfig.quorumQueues),
         "Rewrite missing/classic queue types for matching connections only")(
+        "passThroughUnconvertibleQueues",
+        po::bool_switch(&rewriteConfig.passThroughUnconvertible),
+        "Forward declarations that cannot become quorum queues (exclusive, "
+        "auto-delete, transient, server-named, priority) unchanged instead "
+        "of closing the connection")(
         "consoleVerbosity,v",
         po::value<uint16_t>(&consoleVerbosity)->default_value(0),
         "Default console logging verbosity (0 = No output through to 5 = "

@@ -713,10 +713,12 @@ void Session::backendDisconnect()
 void Session::handleWriteData(FlowType                    direction,
                               MaybeSecureSocketAdaptor<> &writeSocket,
                               Buffer                      data,
-                              std::shared_ptr<std::vector<uint8_t>> owner)
+                              std::shared_ptr<std::vector<uint8_t>> owner,
+                              std::function<void()>       onWritten)
 {
     auto self(shared_from_this());
-    auto writeHandler = [this, self, direction, owner](error_code ec, std::size_t) {
+    auto writeHandler = [this, self, direction, owner, onWritten](
+                            error_code ec, std::size_t) {
         BOOST_LOG_SCOPED_THREAD_ATTR(
             "Vhost",
             boost::log::attributes::constant<std::string>(
@@ -749,7 +751,12 @@ void Session::handleWriteData(FlowType                    direction,
         }
         currentlyReading(direction) = false;
 
-        readData(direction);
+        if (onWritten) {
+            onWritten();
+        }
+        else {
+            readData(direction);
+        }
     };
 
     LOG_TRACE << "Write of " << data.available() << " bytes"
@@ -874,6 +881,13 @@ void Session::handleData(FlowType direction)
         Buffer ingressWrite = processor.ingressWrite();
         Buffer egressWrite  = processor.egressWrite();
 
+        if (processor.rewriteError()) {
+            rejectQueueDeclaration(*processor.rewriteError(),
+                                   egressWrite,
+                                   processor.rewrittenStorage());
+            return;
+        }
+
         bool isOpen = d_connector.state() == Connector::State::OPEN;
         if (ingressWrite.size()) {
             handleWriteData(isOpen ? FlowType::EGRESS : FlowType::INGRESS,
@@ -916,6 +930,35 @@ void Session::handleData(FlowType direction)
         logException(error.what(), d_sessionState, direction);
 
         disconnect(true);
+    }
+}
+
+void Session::rejectQueueDeclaration(
+    const QueueRewriteError                     &error,
+    Buffer                                       forwarded,
+    const std::shared_ptr<std::vector<uint8_t>> &owner)
+{
+    LOG_WARN << "Closing connection, rejected Queue.Declare: " << error.what()
+             << " conn=" << ConnectionSummary(*this);
+
+    // Close the client gracefully once everything that preceded the rejected
+    // declaration has reached the broker. The connector then awaits the
+    // client's CloseOk, closes the broker side and disconnects both.
+    auto closeClient = [this, error] {
+        d_connector.synthesizeCloseWithReason(true,
+                                              error.replyCode(),
+                                              error.what(),
+                                              QueueRewriteError::classId(),
+                                              QueueRewriteError::methodId());
+        sendSyntheticData();
+    };
+
+    if (forwarded.size()) {
+        handleWriteData(
+            FlowType::INGRESS, *d_clientSocket, forwarded, owner, closeClient);
+    }
+    else {
+        closeClient();
     }
 }
 

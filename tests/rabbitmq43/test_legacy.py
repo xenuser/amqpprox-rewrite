@@ -44,6 +44,8 @@ def parse_args():
     p.add_argument('--min-members', type=int, default=3)
     p.add_argument('--passthrough-port', type=int, help='Optional second proxy with rewriting disabled')
     p.add_argument('--vhost-only-port', type=int, help='Optional second proxy with only vhost rewriting')
+    p.add_argument('--unconvertible-passthrough-port', type=int,
+                   help='Optional second proxy with --passThroughUnconvertibleQueues')
     p.add_argument('--report', default='rabbitmq43-results.json')
     a = p.parse_args()
     if len({a.source_vhost, a.target_vhost, a.control_vhost}) != 3:
@@ -226,16 +228,58 @@ class LegacyTests(unittest.TestCase):
         self.assertEqual(self.queue_info(q, self.args.control_vhost)['type'], 'classic')
         self.assertIsNone(self.api.call('GET', 'queues', self.args.target_vhost, q, missing_ok=True))
 
+    def assert_proxy_rejects(self, ch, queue, reason, **kwargs):
+        # The proxy closes the connection with AMQP 540 and a readable reason.
+        with self.assertRaises(pika.exceptions.ConnectionClosedByBroker) as caught:
+            ch.queue_declare(queue, **kwargs)
+        self.assertEqual(caught.exception.reply_code, 540)
+        self.assertIn('amqpprox: cannot convert to quorum', caught.exception.reply_text)
+        self.assertIn(reason, caught.exception.reply_text)
+
     def test_incompatible_flags_are_rejected(self):
-        for flags in ({'durable': False}, {'durable': True, 'exclusive': True},
-                      {'durable': True, 'auto_delete': True}):
+        for flags, reason in (({'durable': False}, 'is not durable'),
+                              ({'durable': True, 'exclusive': True}, 'is exclusive'),
+                              ({'durable': True, 'auto_delete': True}, 'is auto-delete')):
             with self.subTest(flags=flags):
                 q = self.name(str(len(self.resources)))
                 ch = self.connect().channel()
-                with self.assertRaises((pika.exceptions.StreamLostError, pika.exceptions.ConnectionClosed,
-                                        pika.exceptions.ChannelClosedByBroker)):
-                    ch.queue_declare(q, arguments={'x-queue-type': 'classic'}, **flags)
+                self.assert_proxy_rejects(ch, q, reason, arguments={'x-queue-type': 'classic'}, **flags)
                 self.assertIsNone(self.api.call('GET', 'queues', self.args.target_vhost, q, missing_ok=True))
+        ch = self.connect().channel()
+        self.assert_proxy_rejects(ch, '', 'server-named', exclusive=True)
+
+    def test_priority_queue_is_rejected(self):
+        q = self.name('priority')
+        ch = self.connect().channel()
+        self.assert_proxy_rejects(ch, q, 'x-max-priority', durable=True,
+                                  arguments={'x-queue-type': 'classic', 'x-max-priority': 10})
+        self.assertIsNone(self.api.call('GET', 'queues', self.args.target_vhost, q, missing_ok=True))
+
+    def test_classic_only_arguments_are_dropped(self):
+        q = self.name('lazy')
+        ch = self.connect().channel()
+        args = {'x-queue-type': 'classic', 'x-queue-mode': 'lazy', 'x-queue-version': 2,
+                'x-queue-master-locator': 'min-masters', 'x-max-length': 1000}
+        ch.queue_declare(q, durable=True, arguments=args)
+        ch.queue_declare(q, durable=True, arguments=args)  # redeclaration stays equivalent
+        self.assert_quorum(q)
+        arguments = self.queue_info(q)['arguments']
+        self.assertEqual(arguments.get('x-max-length'), 1000)
+        for dropped in ('x-queue-mode', 'x-queue-version', 'x-queue-master-locator'):
+            self.assertNotIn(dropped, arguments)
+
+    def test_unconvertible_passthrough_proxy(self):
+        if not self.args.unconvertible_passthrough_port:
+            self.skipTest('Supply --unconvertible-passthrough-port for live pass-through regression')
+        ch = self.connect(port=self.args.unconvertible_passthrough_port).channel()
+        # Server-named exclusive reply queue: forwarded unchanged, broker decides.
+        reply = ch.queue_declare('', exclusive=True).method.queue
+        self.assertEqual(self.queue_info(reply)['type'], 'classic')
+        self.assertTrue(self.queue_info(reply)['exclusive'])
+        # Convertible declarations on the same connection are still converted.
+        q = self.name('converted')
+        ch.queue_declare(q, durable=True, arguments={'x-queue-type': 'classic'})
+        self.assert_quorum(q)
 
     def test_existing_classic_is_not_converted(self):
         q = self.name('preexisting')

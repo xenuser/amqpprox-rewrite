@@ -1,3 +1,5 @@
 # Configure source/destination vhosts before enabling the service.
 # Do not use --listenPort here: control.conf configures TLS/backends first.
+# Add --passThroughUnconvertibleQueues to forward exclusive/temporary queue
+# declarations unchanged instead of closing the connection.
 AMQPPROX_OPTIONS="--rewriteVhostFrom / --rewriteVhostTo customer-a/legacy-app --rewriteClassicQueuesToQuorum --consoleVerbosity 3"

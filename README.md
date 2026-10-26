@@ -23,7 +23,10 @@ amqpprox --listenPort 5673 --destinationDNS new-rabbitmq.example.com --destinati
 ```
 
 Point the application at the proxy while retaining its original vhost. Only
-named, durable, non-exclusive, non-auto-delete queues qualify for conversion.
+named, durable, non-exclusive, non-auto-delete, non-priority queues qualify for
+conversion; classic-only tuning such as `x-queue-mode=lazy` is dropped. Other
+declarations are refused with an AMQP `Connection.Close` (code 540) naming the
+reason, or forwarded unchanged with `--passThroughUnconvertibleQueues`.
 Existing queues/messages are not migrated. All rewriting is disabled by default;
 one source-to-destination mapping is supported per proxy process.
 

@@ -27,6 +27,7 @@ AMQP URI, `/` as the vhost is normally encoded as `%2F` in its path.
 | `--rewriteVhostFrom /` | Exact, case-sensitive source vhost; defaults to `/` |
 | `--rewriteVhostTo customer-a/app` | Destination; enabling vhost rewriting |
 | `--rewriteClassicQueuesToQuorum` | Also rewrite queue declarations on matching connections |
+| `--passThroughUnconvertibleQueues` | Forward declarations that cannot become quorum queues unchanged instead of closing the connection (requires the quorum option) |
 
 A source vhost or quorum option without a nonempty destination is rejected.
 Vhost values must be nonempty, at most 255 bytes, and contain no NUL.
@@ -112,20 +113,57 @@ are possible. Keep credentials protected on any plaintext network leg.
 
 | Incoming declaration on a matching connection | Result with quorum rewriting enabled |
 | --- | --- |
-| Active, no `x-queue-type` | Inject `x-queue-type=quorum` |
-| Active, explicit `classic` | Replace with `quorum` |
-| Active, explicit `quorum` | Preserve; enforce compatible flags |
-| Active, explicit `stream` or another type | Pass through for the broker to validate |
+| Active, no `x-queue-type`, convertible | Inject `x-queue-type=quorum` |
+| Active, explicit `classic`, convertible | Replace with `quorum` |
+| Active, missing/`classic`, unconvertible | Close the connection (default), or forward unchanged with `--passThroughUnconvertibleQueues` |
+| Active, explicit `quorum`, `stream` or another type | Pass through unchanged for the broker to validate |
 | Passive declaration | Pass through unchanged |
 | Nonmatching connection or feature disabled | Pass through unchanged |
 
-Conversion requires a **named, durable, non-exclusive, non-auto-delete** queue.
-The auto-delete restriction is a conservative migration policy; queue lifecycle
-must not be silently changed. Unsupported flags, malformed arguments, duplicate
-or non-string `x-queue-type`, and a rewritten frame exceeding the negotiated
-frame-max close the connection with a proxy log explanation. This is a
-connection-level failure, not a synthesized channel error. Other channels on
-that connection are affected; configure client retry/backoff to avoid loops.
+A declaration is **convertible** when the queue is named, durable,
+non-exclusive and non-auto-delete, and has no `x-max-priority` and no
+`x-overflow=reject-publish-dlx` argument. Everything else is unconvertible:
+quorum queues cannot be exclusive, transient or server-named, and converting
+priority queues or auto-delete queues would silently change application
+behavior.
+
+Classic-only tuning arguments are dropped from converted declarations:
+`x-queue-mode` (for example `lazy`), `x-queue-version` and
+`x-queue-master-locator`. They control classic storage and mirroring-era
+placement, have no quorum meaning, and would otherwise make RabbitMQ refuse the
+quorum declaration. All other arguments are kept byte-exact. If the application
+later redeclares the queue with these arguments, the proxy drops them again, so
+the redeclaration stays equivalent.
+
+### Unconvertible declarations
+
+By default the proxy refuses an unconvertible declaration with an AMQP
+`Connection.Close` to the application: reply code **540** (`NOT_IMPLEMENTED`),
+the failing method `Queue.Declare` (class 50, method 10), and a reason such as
+`amqpprox: cannot convert to quorum, queue 'reply' is exclusive; quorum queues
+cannot be exclusive`. Client libraries surface this as a connection shutdown
+with that code and text (for example `OperationInterruptedException` in the
+.NET client), and the proxy logs a warning with the connection summary.
+Frames the application sent before the rejected declaration are still
+forwarded; the declaration and anything after it are not. The proxy then waits
+for the application's `Connection.CloseOk` and closes the broker side normally.
+Malformed declarations (reply code 502) and rewritten frames exceeding the
+negotiated frame-max (reply code 501) are refused the same way.
+
+The whole connection closes, because the proxy cannot close a single channel
+without the broker's agreement. Configure client retry/backoff to avoid
+reconnect loops, and fix the application's declaration or use pass-through.
+
+With `--passThroughUnconvertibleQueues` the declaration is forwarded unchanged
+and the target vhost's rules decide: a server-named exclusive reply queue, for
+example, is created with the vhost's default type or as classic, as RabbitMQ
+decides for exclusive queues. Use it when the application relies on temporary
+or RPC reply queues and the cluster permits those queues. It does not weaken
+conversion: convertible declarations on the same connection are still
+converted. Raise `--consoleVerbosity` to 4 (debug) to log each forwarded
+unconvertible declaration and each dropped argument. If the cluster forbids
+classic queues entirely, temporary reply queues need a different design, such
+as RabbitMQ Direct Reply-to.
 
 Queue names, bindings, exchanges, flags, unrelated argument bytes, channel IDs,
 message bodies, headers, confirms and acknowledgements are preserved. TCP
@@ -144,8 +182,10 @@ for this implementation and should not be enabled just for this adapter.
 1. **Inventory every declaration.** Include startup/recovery, dynamically
    created queues, reply queues, all services sharing a connection and code
    paths triggered only under failure. Temporary/exclusive/non-durable queues
-   cannot be transparently converted by this adapter. Direct Reply-to is a
-   separate broker capability; test the app's actual RPC behavior.
+   cannot be transparently converted by this adapter: decide between the
+   default rejection and `--passThroughUnconvertibleQueues` from this
+   inventory. Direct Reply-to is a separate broker capability; test the app's
+   actual RPC behavior.
 2. **Create the destination topology and permissions deliberately.** Grant the
    app's user only the destination vhost permissions it needs. No source `/`
    permission is needed after rewriting. Do not map different tenants' `/`
@@ -157,8 +197,9 @@ for this implementation and should not be enabled just for this adapter.
 4. **Check quorum semantics beyond declaration.** Global QoS prefetch and
    exclusive consumers are incompatible. TTL, retry/requeue behavior, delivery
    limits, dead-lettering, priorities, overflow rules and consumer timeouts may
-   differ from the old broker. This proxy does not rewrite those operations or
-   arguments. Rewriting is not a universal old-client compatibility layer.
+   differ from the old broker. This proxy does not rewrite those operations;
+   of the declaration arguments it only drops the classic-only tuning listed
+   above. Rewriting is not a universal old-client compatibility layer.
 5. **Test reliability at the application level.** Publisher confirms, mandatory
    returns, manual ACK/NACK, redelivery, duplicate handling and reconnect recovery
    matter. Replication does not give exactly-once processing. A cluster or proxy

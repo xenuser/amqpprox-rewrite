@@ -347,6 +347,22 @@ void Connector::synthesizeCustomCloseError(bool             sendToIngressSide,
         d_close, sendToIngressSide, code, text, classId, methodId);
 }
 
+void Connector::synthesizeCloseWithReason(bool             sendToIngressSide,
+                                          uint16_t         code,
+                                          std::string_view text,
+                                          uint16_t         classId,
+                                          uint16_t         methodId)
+{
+    d_state = sendToIngressSide ? State::CLIENT_CLOSE_SENT
+                                : State::SERVER_CLOSE_SENT;
+    synthesizeMessage(d_close,
+                      sendToIngressSide,
+                      code,
+                      text.substr(0, Constants::shortStringLimit()),
+                      classId,
+                      methodId);
+}
+
 std::size_t Connector::frameMax() const
 {
     const auto negotiated = d_tuneOk.frameMax();
