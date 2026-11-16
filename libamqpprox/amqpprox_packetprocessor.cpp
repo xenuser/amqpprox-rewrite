@@ -101,7 +101,8 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
                 rewritten = rewriteQueueDeclare(
                     frame,
                     d_connector.frameMax(),
-                    d_connector.passThroughUnconvertibleQueues());
+                    d_connector.passThroughUnconvertibleQueues(),
+                    d_connector.promoteTransientQueues());
             }
             catch (const QueueRewriteError &error) {
                 // Forward what preceded the rejected frame; discard the rest.

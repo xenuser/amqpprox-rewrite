@@ -281,6 +281,84 @@ TEST(Rewrite, PriorityAndRejectPublishDlxAreUnconvertible)
               wire(declare(concat({overflow, field("x-queue-type", "quorum")}))));
 }
 
+TEST(Rewrite, RejectionListsEveryReason)
+{
+    const uint16_t notImplemented = Reply::Codes::not_implemented;
+    expectRejected(declare({}, 14),
+                   notImplemented,
+                   "queue 'jobs' is exclusive and is auto-delete");
+    expectRejected(declare({}, 12),
+                   notImplemented,
+                   "queue 'jobs' is not durable, is exclusive and is "
+                   "auto-delete");
+    expectRejected(declare(field("x-max-priority", 'b', {10}), 0),
+                   notImplemented,
+                   "queue 'jobs' is not durable and uses x-max-priority");
+}
+
+TEST(Rewrite, PromoteTransientDeclaresDurableQuorum)
+{
+    auto rewrite = [](const Bytes &payload) {
+        return rewriteQueueDeclare(frame(payload), FRAME_MAX, false, true);
+    };
+
+    // Non-durable named queue: converted and declared durable (flags 0 -> 2).
+    EXPECT_EQ(rewrite(declare({}, 0)),
+              wire(declare(field("x-queue-type", "quorum"), 2)));
+    // No-wait is kept (16 -> 18), classic-only tuning is still dropped.
+    auto args = concat({field("x-queue-type", "classic"),
+                        field("x-queue-mode", "lazy")});
+    EXPECT_EQ(rewrite(declare(args, 16)),
+              wire(declare(field("x-queue-type", "quorum"), 18)));
+    // Durable declarations are converted as before.
+    EXPECT_EQ(rewrite(declare()),
+              wire(declare(field("x-queue-type", "quorum"))));
+}
+
+TEST(Rewrite, PromoteTransientKeepsOtherObstacles)
+{
+    for (const auto &[payload, reason] :
+         {std::pair<Bytes, std::string>{declare({}, 4),
+                                         "is not durable and is exclusive"},
+          {declare({}, 8), "is not durable and is auto-delete"},
+          {declare(field("x-max-priority", 'b', {10}), 0),
+           "is not durable and uses x-max-priority"},
+          {declare({}, 0, ""), "server-named queues cannot"}}) {
+        try {
+            rewriteQueueDeclare(frame(payload), FRAME_MAX, false, true);
+            ADD_FAILURE() << "expected rejection: " << reason;
+        }
+        catch (const QueueRewriteError &error) {
+            EXPECT_NE(std::string(error.what()).find(reason),
+                      std::string::npos)
+                << error.what();
+        }
+        // With pass-through these are forwarded unchanged instead.
+        EXPECT_TRUE(
+            rewriteQueueDeclare(frame(payload), FRAME_MAX, true, true).empty());
+    }
+}
+
+TEST(Rewrite, PromoteTransientConfigurationReachesProcessor)
+{
+    RewriteConfig cfg{"/", "tenant/app", true};
+    cfg.promoteTransientQueues = true;
+    EXPECT_NO_THROW(cfg.validate());
+    Harness h(cfg);
+    EXPECT_TRUE(h.connector.promoteTransientQueues());
+
+    auto            data = wire(declare({}, 0));
+    PacketProcessor p(h.state, h.connector);
+    process(p, data);
+    EXPECT_FALSE(p.rewriteError());
+    EXPECT_EQ(copy(p.egressWrite()),
+              wire(declare(field("x-queue-type", "quorum"), 2)));
+
+    RewriteConfig withoutQuorum{"/", "tenant/app", false};
+    withoutQuorum.promoteTransientQueues = true;
+    EXPECT_THROW(withoutQuorum.validate(), std::invalid_argument);
+}
+
 TEST(Rewrite, PassThroughForwardsUnconvertibleUnchanged)
 {
     for (const auto &payload :

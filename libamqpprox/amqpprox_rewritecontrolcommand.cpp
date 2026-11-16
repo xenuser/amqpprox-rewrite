@@ -81,7 +81,9 @@ void RewriteControlCommand::handleCommand(const std::string & /* command */,
                << "Default destination: '" << config.targetVhost << "'\n"
                << "Quorum queues: " << (config.quorumQueues ? "yes" : "no")
                << ", pass-through unconvertible: "
-               << (config.passThroughUnconvertible ? "yes" : "no") << "\n";
+               << (config.passThroughUnconvertible ? "yes" : "no")
+               << ", promote non-durable to durable: "
+               << (config.promoteTransientQueues ? "yes" : "no") << "\n";
         if (config.userVhosts) {
             output << "User vhost map '" << d_userVhostMapFile << "', "
                    << config.userVhosts->size() << " mappings:\n";

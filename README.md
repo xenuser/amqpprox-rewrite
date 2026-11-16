@@ -29,6 +29,8 @@ named, durable, non-exclusive, non-auto-delete, non-priority queues qualify for
 conversion; classic-only tuning such as `x-queue-mode=lazy` is dropped. Other
 declarations are refused with an AMQP `Connection.Close` (code 540) naming the
 reason, or forwarded unchanged with `--passThroughUnconvertibleQueues`.
+`--promoteTransientQueuesToDurable` also converts queues that are only
+non-durable, declaring them durable quorum queues.
 Existing queues/messages are not migrated. All rewriting is disabled by default;
 one source vhost is supported per proxy process.
 

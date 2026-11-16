@@ -143,6 +143,10 @@ int main(int argc, char *argv[])
         "Forward declarations that cannot become quorum queues (exclusive, "
         "auto-delete, transient, server-named, priority) unchanged instead "
         "of closing the connection")(
+        "promoteTransientQueuesToDurable",
+        po::bool_switch(&rewriteConfig.promoteTransientQueues),
+        "Also convert named, non-exclusive, non-auto-delete queues declared "
+        "non-durable, declaring them durable quorum queues")(
         "consoleVerbosity,v",
         po::value<uint16_t>(&consoleVerbosity)->default_value(0),
         "Default console logging verbosity (0 = No output through to 5 = "

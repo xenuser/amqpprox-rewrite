@@ -155,10 +155,11 @@ portability; this does not replace testing the actual legacy .NET/client library
 | Optional disabled proxy | Explicit classic remains classic |
 | Optional vhost-only proxy | Vhost changes but explicit classic remains classic |
 | Optional pass-through proxy | Exclusive reply queue forwarded unchanged (classic); durable queue still quorum |
+| Optional promotion proxy | Non-durable named queue becomes a durable quorum queue; exclusive still refused |
 
 Exit code 0 means all executed assertions passed; 1 means test failure; 2 means
 configuration failure. The JSON report records the server version, online nodes,
-quorum members and test/skip counts without credentials. Three optional regression
+quorum members and test/skip counts without credentials. Four optional regression
 cases are skipped unless you provide the ports below. Review skipped cases;
 a partial suite is not a complete production acceptance.
 
@@ -183,10 +184,16 @@ build/system/bin/amqpprox --controlSocket /tmp/amqpprox-passthrough --logDirecto
   --listenPort 5676 --destinationDNS rabbit1.example.com --destinationPort 5672 \
   --rewriteVhostTo rewrite-test-target --rewriteClassicQueuesToQuorum \
   --passThroughUnconvertibleQueues
+# Quorum rewriting that also promotes non-durable named queues to durable.
+build/system/bin/amqpprox --controlSocket /tmp/amqpprox-promote --logDirectory logs-promote \
+  --listenPort 5677 --destinationDNS rabbit1.example.com --destinationPort 5672 \
+  --rewriteVhostTo rewrite-test-target --rewriteClassicQueuesToQuorum \
+  --promoteTransientQueuesToDurable
 ```
 
 Append `--passthrough-port 5674 --vhost-only-port 5675
---unconvertible-passthrough-port 5676` to run all cases. For a
+--unconvertible-passthrough-port 5676 --promote-transient-port 5677` to run all
+cases. For a
 TLS test, configure these listeners with the same TLS credentials and use the
 same client flags. Each process needs a distinct control socket and log folder.
 

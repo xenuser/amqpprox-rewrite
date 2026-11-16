@@ -1,3 +1,4 @@
+// Modified by the amqpprox-rewrite fork on 2026-11-16; see MODIFICATIONS.md.
 /*
 ** Copyright 2022 Bloomberg Finance L.P.
 **
@@ -71,10 +72,18 @@ SessionState::ConnectionStatus ConnectionSelector::acquireConnection(
             &isFarm, &resourceName, sessionState)) {
         std::lock_guard<std::mutex> lg(d_mutex);
         if (d_defaultFarmName.empty()) {
+            LOG_ERROR << "No mapping available for vhost="
+                      << sessionState.getVirtualHost() << " ingressRemote="
+                      << sessionState.hostname(
+                             sessionState.getIngress().second)
+                      << ":" << sessionState.getIngress().second.port();
             LOG_INFO << "No farm available for: " << sessionState;
             return SessionState::ConnectionStatus::NO_FARM;
         }
         else {
+            LOG_INFO << "No mapping for vhost="
+                     << sessionState.getVirtualHost()
+                     << ", using default farm " << d_defaultFarmName;
             isFarm       = true;
             resourceName = d_defaultFarmName;
         }

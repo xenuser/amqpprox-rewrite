@@ -46,6 +46,8 @@ def parse_args():
     p.add_argument('--vhost-only-port', type=int, help='Optional second proxy with only vhost rewriting')
     p.add_argument('--unconvertible-passthrough-port', type=int,
                    help='Optional second proxy with --passThroughUnconvertibleQueues')
+    p.add_argument('--promote-transient-port', type=int,
+                   help='Optional second proxy with --promoteTransientQueuesToDurable')
     p.add_argument('--report', default='rabbitmq43-results.json')
     a = p.parse_args()
     if len({a.source_vhost, a.target_vhost, a.control_vhost}) != 3:
@@ -267,6 +269,18 @@ class LegacyTests(unittest.TestCase):
         self.assertEqual(arguments.get('x-max-length'), 1000)
         for dropped in ('x-queue-mode', 'x-queue-version', 'x-queue-master-locator'):
             self.assertNotIn(dropped, arguments)
+
+    def test_promote_transient_proxy(self):
+        if not self.args.promote_transient_port:
+            self.skipTest('Supply --promote-transient-port for live non-durable promotion')
+        ch = self.connect(port=self.args.promote_transient_port).channel()
+        q = self.name('transient')
+        args = {'x-queue-type': 'classic'}
+        ch.queue_declare(q, durable=False, arguments=args)
+        ch.queue_declare(q, durable=False, arguments=args)  # redeclaration stays equivalent
+        self.assert_quorum(q)  # durable quorum queue on the broker
+        # Exclusive queues are still refused; promotion only lifts durability.
+        self.assert_proxy_rejects(ch, self.name('transient-exclusive'), 'is exclusive', exclusive=True)
 
     def test_unconvertible_passthrough_proxy(self):
         if not self.args.unconvertible_passthrough_port:

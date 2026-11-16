@@ -29,6 +29,7 @@ AMQP URI, `/` as the vhost is normally encoded as `%2F` in its path.
 | `--rewriteVhostUserMap FILE` | Destination per AMQP user from a config file, see [per-user vhost mapping](#per-user-vhost-mapping) |
 | `--rewriteClassicQueuesToQuorum` | Also rewrite queue declarations on matching connections |
 | `--passThroughUnconvertibleQueues` | Forward declarations that cannot become quorum queues unchanged instead of closing the connection (requires the quorum option) |
+| `--promoteTransientQueuesToDurable` | Also convert named, non-exclusive, non-auto-delete queues declared non-durable, as durable quorum queues (requires the quorum option) |
 
 A source vhost or quorum option without a destination (`--rewriteVhostTo` or
 `--rewriteVhostUserMap`) is rejected.
@@ -84,7 +85,10 @@ amqpprox --rewriteVhostFrom / --rewriteVhostUserMap /etc/amqpprox/vhost-users.co
   vhost.** A wrong mapping then fails with an access error instead of mixing
   applications.
 - Every destination vhost needs a route: a `MAP FARM`/`MAP BACKEND` line per
-  vhost in the control configuration, or `MAP DEFAULT <farm>` for all.
+  vhost in the control configuration, or `MAP DEFAULT <farm>` for all. With
+  the default farm the log shows `No mapping for vhost=<name>, using default
+  farm <farm>` (INFO); `ERROR No mapping available for vhost=...` means there is
+  neither a route nor a default farm, and the client gets 506.
 - Lines are `username vhost` separated by spaces or tabs; blank lines and lines
   starting with `#` are ignored, and Windows line endings are accepted.
   Malformed lines, duplicate users and invalid vhost names stop the proxy at
@@ -192,6 +196,7 @@ are possible. Keep credentials protected on any plaintext network leg.
 | --- | --- |
 | Active, no `x-queue-type`, convertible | Inject `x-queue-type=quorum` |
 | Active, explicit `classic`, convertible | Replace with `quorum` |
+| Active, missing/`classic`, convertible except for being non-durable | Like unconvertible, or a durable quorum queue with `--promoteTransientQueuesToDurable` |
 | Active, missing/`classic`, unconvertible | Close the connection (default), or forward unchanged with `--passThroughUnconvertibleQueues` |
 | Active, explicit `quorum`, `stream` or another type | Pass through unchanged for the broker to validate |
 | Passive declaration | Pass through unchanged |
@@ -203,6 +208,17 @@ non-exclusive and non-auto-delete, and has no `x-max-priority` and no
 quorum queues cannot be exclusive, transient or server-named, and converting
 priority queues or auto-delete queues would silently change application
 behavior.
+
+With `--promoteTransientQueuesToDurable`, a named, non-exclusive,
+non-auto-delete queue declared **non-durable** is converted too: the proxy sets
+the durable flag and declares a durable quorum queue. Every later declaration
+from the application is promoted the same way, so redeclarations stay
+equivalent. The application-visible difference is that the queue and its
+messages now survive a broker restart, which legacy applications usually do
+not rely on the opposite of. Non-durable queues that are also exclusive or
+auto-delete, or use priorities, stay unconvertible. Without the option such a
+declaration stays classic and transient (with pass-through), which RabbitMQ
+4.x does not replicate and marks as a deprecated feature.
 
 Classic-only tuning arguments are dropped from converted declarations:
 `x-queue-mode` (for example `lazy`), `x-queue-version` and
@@ -216,9 +232,9 @@ the redeclaration stays equivalent.
 
 By default the proxy refuses an unconvertible declaration with an AMQP
 `Connection.Close` to the application: reply code **540** (`NOT_IMPLEMENTED`),
-the failing method `Queue.Declare` (class 50, method 10), and a reason such as
-`amqpprox: cannot convert to quorum, queue 'reply' is exclusive; quorum queues
-cannot be exclusive`. Client libraries surface this as a connection shutdown
+the failing method `Queue.Declare` (class 50, method 10), and a reason listing
+every obstacle, such as `amqpprox: cannot convert to quorum, queue 'reply' is
+not durable, is exclusive and is auto-delete`. Client libraries surface this as a connection shutdown
 with that code and text (for example `OperationInterruptedException` in the
 .NET client), and the proxy logs a warning with the connection summary.
 Frames the application sent before the rejected declaration are still
@@ -274,7 +290,7 @@ Set it back with `LOG FILE 3` afterwards; level 5 (TRACE) can log credentials.
 | INFO (3) | `Reloaded <n> user vhost mappings from '<file>'` | `REWRITE RELOAD` / `systemctl reload` succeeded |
 | WARN (2) | `User vhost map reload failed, keeping the current map: <reason>` | Reload refused; the previous map stays active |
 | ERROR (1) | `Received exception: Expected ...OpenOk..., got: Close, Received method from server: Close = [replyCode: 530 ...` | RabbitMQ refused Connection.Open, e.g. the destination vhost does not exist; the client receives the same code and text |
-| DEBUG (4) | `Converted Queue.Declare of '<queue>' on channel <n> to quorum` | Declaration rewritten |
+| DEBUG (4) | `Converted Queue.Declare of '<queue>' on channel <n> to quorum` | Declaration rewritten; with `, promoted from non-durable to durable` when promotion applied |
 | DEBUG (4) | `Dropping classic-only argument <arg>` | Argument removed from a converted declaration |
 | DEBUG (4) | `Forwarding unconvertible declaration unchanged: <reason>` | Pass-through mode forwarded it as sent |
 | ERROR (1) | `Rejected Queue.Declare on channel <n>, reply code <code>: <reason>` | Proxy refuses it; also shows how many preceding frames/bytes are forwarded and how many bytes are discarded |

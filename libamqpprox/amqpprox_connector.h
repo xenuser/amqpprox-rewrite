@@ -143,6 +143,10 @@ class Connector {
     {
         return d_rewriteConfig.passThroughUnconvertible;
     }
+    bool promoteTransientQueues() const
+    {
+        return d_rewriteConfig.promoteTransientQueues;
+    }
     std::size_t frameMax() const;
 
     /**

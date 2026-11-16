@@ -116,38 +116,56 @@ bool isClassicOnlyTuning(const std::string &key)
 
 // Returns why the declaration cannot become a quorum queue without changing
 // its semantics, or an empty string when it can.
+// Returns every reason why the declaration cannot become a quorum queue
+// without changing its semantics, or an empty string when it can. With
+// `promoteTransient`, a missing durable flag alone is no obstacle: the queue
+// is then declared durable.
 std::string unconvertibleReason(const std::string           &name,
                                 uint8_t                      flags,
-                                const std::vector<Argument> &arguments)
+                                const std::vector<Argument> &arguments,
+                                bool                         promoteTransient)
 {
     if (name.empty()) {
         return "server-named queues cannot be quorum queues";
     }
 
-    const std::string queue = "queue '" + name + "' ";
+    std::vector<std::string> reasons;
+    bool                     blocking = false;
     if (!(flags & DURABLE)) {
-        return queue + "is not durable; quorum queues are always durable";
+        reasons.push_back("is not durable");
+        blocking = blocking || !promoteTransient;
     }
     if (flags & EXCLUSIVE) {
-        return queue + "is exclusive; quorum queues cannot be exclusive";
+        reasons.push_back("is exclusive");
+        blocking = true;
     }
     if (flags & AUTO_DELETE) {
-        return queue + "is auto-delete; quorum queues cannot be auto-delete";
+        reasons.push_back("is auto-delete");
+        blocking = true;
     }
-
     for (const auto &argument : arguments) {
         if (argument.key == "x-max-priority") {
-            return queue + "uses x-max-priority, which quorum queues do not "
-                           "support";
+            reasons.push_back("uses x-max-priority");
+            blocking = true;
         }
         if (argument.key == "x-overflow" && argument.type == 'S' &&
             argument.text == "reject-publish-dlx") {
-            return queue + "uses x-overflow=reject-publish-dlx, which quorum "
-                           "queues do not support";
+            reasons.push_back("uses x-overflow=reject-publish-dlx");
+            blocking = true;
         }
     }
+    if (!blocking) {
+        return {};
+    }
 
-    return {};
+    std::string text = "queue '" + name + "' ";
+    for (std::size_t i = 0; i < reasons.size(); ++i) {
+        if (i > 0) {
+            text += i + 1 == reasons.size() ? " and " : ", ";
+        }
+        text += reasons[i];
+    }
+    return text;
 }
 
 void put32(std::vector<uint8_t> &out, uint32_t value)
@@ -194,6 +212,11 @@ void RewriteConfig::validate() const
     if (passThroughUnconvertible && !quorumQueues) {
         throw std::invalid_argument(
             "--passThroughUnconvertibleQueues requires "
+            "--rewriteClassicQueuesToQuorum");
+    }
+    if (promoteTransientQueues && !quorumQueues) {
+        throw std::invalid_argument(
+            "--promoteTransientQueuesToDurable requires "
             "--rewriteClassicQueuesToQuorum");
     }
 }
@@ -266,7 +289,8 @@ std::optional<std::string> plainUsername(std::string_view mechanism,
 
 std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
                                          std::size_t  maxFrameSize,
-                                         bool         passThroughUnconvertible)
+                                         bool         passThroughUnconvertible,
+                                         bool         promoteTransient)
 {
     if (frame.type != 1 || frame.length < 4) {
         return {};
@@ -278,8 +302,9 @@ std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
 
     Cursor c(p, frame.length);
     c.skip(6);  // class, method, reserved ticket
-    const auto name  = c.string(c.byte());
-    const auto flags = c.byte();
+    const auto name     = c.string(c.byte());
+    const auto flagsPos = c.pos;
+    const auto flags    = c.byte();
     if (flags & PASSIVE) {
         return {};  // passive checks do not create/change queues
     }
@@ -321,7 +346,8 @@ std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
         return {};
     }
 
-    const auto reason = unconvertibleReason(name, flags, arguments);
+    const auto reason =
+        unconvertibleReason(name, flags, arguments, promoteTransient);
     if (!reason.empty()) {
         if (passThroughUnconvertible) {
             LOG_DEBUG << "Forwarding unconvertible declaration unchanged: "
@@ -377,8 +403,15 @@ std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
     out.insert(out.end(), table.begin(), table.end());
     out.push_back(0xce);
 
+    // Reached for a non-durable queue only when promotion is enabled.
+    const bool promoted = !(flags & DURABLE);
+    if (promoted) {
+        out[Frame::frameHeaderSize() + flagsPos] |= DURABLE;
+    }
+
     LOG_DEBUG << "Converted Queue.Declare of '" << name << "' on channel "
-              << frame.channel << " to quorum";
+              << frame.channel << " to quorum"
+              << (promoted ? ", promoted from non-durable to durable" : "");
     return out;
 }
 

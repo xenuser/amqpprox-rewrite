@@ -73,6 +73,8 @@ MODES = {
     'usermap': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), declare('quorum')),
     'usermap-refused': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), None),
     'vhost-missing': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), None),
+    'promote': (['--rewriteClassicQueuesToQuorum', '--promoteTransientQueuesToDurable'],
+                ('jobs', 0), declare('quorum', 2, 'jobs')),
 }
 VHOST_MISSING = b'NOT_ALLOWED - vhost VHOST2 not found'
 
@@ -330,6 +332,10 @@ def reload_smoke(binary, directory):
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill(); process.wait()
+    # With MAP DEFAULT, an unmapped destination vhost is no error.
+    logs = '\n'.join(p.read_text(errors='replace') for p in (directory / 'logs').glob('*') if p.is_file())
+    assert 'using default farm farm' in logs, logs[-2000:]
+    assert 'No mapping available' not in logs, logs[-2000:]
     print('PASS real proxy sockets: runtime user map reload')
 
 
@@ -341,7 +347,7 @@ def main():
     cases = ((False, 'disabled'), (False, 'convert'), (True, 'convert'),
              (False, 'reject'), (True, 'reject'), (False, 'passthrough'),
              (False, 'usermap'), (True, 'usermap'), (False, 'usermap-refused'),
-             (False, 'vhost-missing'))
+             (False, 'vhost-missing'), (False, 'promote'))
     for tls, mode in cases:
         with tempfile.TemporaryDirectory(prefix='amqpprox-wire-') as directory:
             smoke(binary, pathlib.Path(directory), tls, mode)

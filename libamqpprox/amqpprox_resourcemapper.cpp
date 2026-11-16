@@ -1,3 +1,4 @@
+// Modified by the amqpprox-rewrite fork on 2026-11-16; see MODIFICATIONS.md.
 /*
 ** Copyright 2020 Bloomberg Finance L.P.
 **
@@ -62,9 +63,7 @@ bool ResourceMapper::getResourceMap(bool               *isFarm,
         *resourceName = val.second;
         return true;
     }
-    LOG_ERROR << "No mapping available for vhost=" << state.getVirtualHost()
-              << " ingressRemote=" << state.hostname(state.getIngress().second)
-              << ":" << state.getIngress().second.port();
+    // Logged by the caller, which knows whether a default farm applies.
     return false;
 }
 

@@ -11,6 +11,7 @@ Each scenario opens its own connection:
 | --- | --- | --- |
 | `durable-named` | `QueueDeclare(name, durable: true, exclusive: false, autoDelete: false)` | Declared; the broker receives `x-queue-type=quorum` |
 | `classic-lazy-args` | Explicit `classic`, `x-queue-mode=lazy`, TTL | Declared as quorum; `x-queue-mode` dropped, TTL kept |
+| `transient-named` | `QueueDeclare(name, durable: false, exclusive: false, autoDelete: false)` | Refused with 540 by default; forwarded unchanged (classic, non-durable) with `--passThroughUnconvertibleQueues`; durable quorum with `--promoteTransientQueuesToDurable` |
 | `library-defaults` | `QueueDeclare(name)`: the library defaults are **non-durable, exclusive, auto-delete** | Refused with 540 by default; forwarded unchanged with `--passThroughUnconvertibleQueues` |
 | `server-named` | `QueueDeclare()` | As `library-defaults` |
 | `global-qos-consume` | `BasicQos(0, 10, global: true)` then `BasicConsume` on a converted queue | Decided by the broker; quorum queues do not support global QoS |

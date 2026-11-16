@@ -28,6 +28,7 @@ struct RewriteConfig {
     std::string targetVhost;
     bool        quorumQueues = false;
     bool        passThroughUnconvertible = false;
+    bool        promoteTransientQueues   = false;
     std::shared_ptr<const UserVhostMap> userVhosts;
 
     void validate() const;
@@ -92,7 +93,8 @@ class QueueRewriteError : public std::runtime_error {
  * cannot be converted and `passThroughUnconvertible` is set. Otherwise
  * returns a complete AMQP frame. All unrelated bytes are preserved, except
  * classic-only tuning arguments which have no quorum equivalent and are
- * dropped.
+ * dropped. With `promoteTransient`, a named, non-exclusive, non-auto-delete
+ * queue declared non-durable is converted too and declared durable.
  *
  * \throw QueueRewriteError for malformed declarations, declarations exceeding
  * `maxFrameSize` after rewriting, and unconvertible declarations unless
@@ -100,7 +102,8 @@ class QueueRewriteError : public std::runtime_error {
  */
 std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
                                          std::size_t  maxFrameSize,
-                                         bool passThroughUnconvertible = false);
+                                         bool passThroughUnconvertible = false,
+                                         bool promoteTransient = false);
 
 /**
  * \brief Reason carried by a Connection.Close or Channel.Close method

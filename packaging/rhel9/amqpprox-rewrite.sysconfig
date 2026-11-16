@@ -2,6 +2,8 @@
 # Do not use --listenPort here: control.conf configures TLS/backends first.
 # Add --passThroughUnconvertibleQueues to forward exclusive/temporary queue
 # declarations unchanged instead of closing the connection.
+# Add --promoteTransientQueuesToDurable to turn named queues that are only
+# declared non-durable into durable quorum queues instead.
 # For one destination vhost per application user, maintain
 # /etc/amqpprox/vhost-users.conf and replace --rewriteVhostTo ... with
 # --rewriteVhostUserMap /etc/amqpprox/vhost-users.conf (keep --rewriteVhostTo

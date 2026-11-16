@@ -58,6 +58,14 @@ Run("classic-lazy-args", channel =>
     return $"declared '{ok.QueueName}' (expected: quorum, x-queue-mode dropped)";
 });
 
+// A named queue that is only non-durable, a common legacy pattern.
+Run("transient-named", channel =>
+{
+    var name = Track(prefix + "-transient");
+    var ok = channel.QueueDeclare(name, durable: false, exclusive: false, autoDelete: false, arguments: null);
+    return $"declared '{ok.QueueName}' (proxy pass-through or --promoteTransientQueuesToDurable mode)";
+});
+
 // QueueDeclare(name) uses the library defaults durable=false, exclusive=true,
 // autoDelete=true: a common legacy pattern that cannot become quorum.
 Run("library-defaults", channel =>
