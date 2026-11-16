@@ -56,6 +56,7 @@
 #include <amqpprox_listencontrolcommand.h>
 #include <amqpprox_mapcontrolcommand.h>
 #include <amqpprox_maphostnamecontrolcommand.h>
+#include <amqpprox_rewritecontrolcommand.h>
 #include <amqpprox_sessioncontrolcommand.h>
 #include <amqpprox_statcontrolcommand.h>
 #include <amqpprox_tlscontrolcommand.h>
@@ -308,6 +309,7 @@ int main(int argc, char *argv[])
         CommandPtr(new MapHostnameControlCommand()),
         CommandPtr(new TlsControlCommand),
         CommandPtr(new AuthControlCommand),
+        CommandPtr(new RewriteControlCommand(userVhostMapFile)),
         CommandPtr(new LimitControlCommand(&connectionLimiterManager,
                                            &dataRateLimitManager))};
 

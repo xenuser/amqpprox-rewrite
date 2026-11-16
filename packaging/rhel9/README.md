@@ -71,6 +71,8 @@ configuration and logs. Do not disable SELinux. This package does not ship a
 custom SELinux policy; inspect AVC denials and follow your site policy.
 
 Logs are in `/var/log/amqpprox` and the journal. Restart after configuration
-changes. Run the [existing-server tests](../../tests/rabbitmq43/README.md)
+changes, except for `/etc/amqpprox/vhost-users.conf`: `sudo systemctl reload
+amqpprox-rewrite` loads it for new connections without dropping existing ones,
+and fails without changing anything if the file is invalid. Run the [existing-server tests](../../tests/rabbitmq43/README.md)
 before production cutover. The service is a single instance; deploy separately
 configured instances/hosts for distinct rewrite mappings and availability.

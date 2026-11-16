@@ -275,6 +275,13 @@ void Connector::receive(const Method &method, FlowType direction)
                 d_connectionReadyHandler();
             }
         }
+        else if (direction == FlowType::EGRESS &&
+                 method.methodType == methods::Close::methodType()) {
+            // The broker refused Connection.Open, for example because the
+            // vhost does not exist or the user has no access to it. Throws
+            // CloseError so the client receives the broker's reason.
+            decodeMethod(&d_openOk, method, methodPayload, direction);
+        }
     } break;
     case State::CLIENT_CLOSE_SENT: {
         if (direction == FlowType::INGRESS &&

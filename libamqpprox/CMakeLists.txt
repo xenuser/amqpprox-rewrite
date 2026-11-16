@@ -56,6 +56,7 @@ add_library(libamqpprox STATIC
     amqpprox_proxyprotocolheaderv1.cpp
     amqpprox_reply.cpp
     amqpprox_rewrite.cpp
+    amqpprox_rewritecontrolcommand.cpp
     amqpprox_resourcemapper.cpp
     amqpprox_robinbackendselector.cpp
     amqpprox_server.cpp

@@ -72,7 +72,9 @@ MODES = {
                     EXCLUSIVE, declare('classic', 6, 'reply')),
     'usermap': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), declare('quorum')),
     'usermap-refused': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), None),
+    'vhost-missing': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), None),
 }
+VHOST_MISSING = b'NOT_ALLOWED - vhost VHOST2 not found'
 
 # --rewriteVhostUserMap files; the client logs in as user 'test'.
 USER_MAPS = {
@@ -117,6 +119,12 @@ def broker(listener, tls_context, target, mode):
             connection.sendall(frame(TUNE))
             assert receive(connection)[2][:4] == b'\x00\x0a\x00\x1f'
             assert receive(connection)[2] == b'\x00\x0a\x00\x28' + short(target) + b'\x00\x00'
+            if mode == 'vhost-missing':
+                # RabbitMQ refuses Connection.Open for a vhost it does not have.
+                connection.sendall(frame(CLOSE + struct.pack('!H', 530) + bytes([len(VHOST_MISSING)]) +
+                                         VHOST_MISSING + struct.pack('!HH', 10, 40)))
+                assert closed(connection)
+                return
             connection.sendall(frame(b'\x00\x0a\x00\x29\x00'))
             assert receive(connection) == (8, 0, b'')
             name = MODES[mode][1][0]
@@ -201,6 +209,16 @@ def smoke(binary, directory, tls=False, mode='convert'):
                             pass
                         print(f'PASS real proxy sockets: tls={tls}, mode={mode}')
                         return
+                    if mode == 'vhost-missing':
+                        # The broker's refusal reaches the client with its reason.
+                        kind, channel, payload = receive(connection)
+                        assert (kind, channel, payload[:4]) == (1, 0, CLOSE), payload
+                        code, = struct.unpack('!H', payload[4:6])
+                        assert code == 530 and payload[7:7 + payload[6]] == VHOST_MISSING, payload
+                        assert closed(connection)
+                        future.result(timeout=20)
+                        print(f'PASS real proxy sockets: tls={tls}, mode={mode}')
+                        return
                     assert receive(connection)[2][:4] == b'\x00\x0a\x00\x29'
                     name, flags = MODES[mode][1]
                     data = (frame(b'', kind=8) + frame(declare('classic', flags, name), channel=7) +
@@ -234,16 +252,101 @@ def smoke(binary, directory, tls=False, mode='convert'):
         print(f'PASS real proxy sockets: tls={tls}, mode={mode}')
 
 
+def control(sock, command):
+    with socket.socket(socket.AF_UNIX) as c:
+        c.settimeout(10); c.connect(sock); c.sendall((command + '\n').encode())
+        reply = b''
+        while True:
+            part = c.recv(4096)
+            if not part:
+                return reply.decode()
+            reply += part
+
+
+def open_client(port):
+    """Handshake as user 'test' to VHOST1; returns the socket and the reply to Open."""
+    connection = connect(port)
+    connection.sendall(HEADER); assert receive(connection)[2][:4] == START[:4]
+    start_ok = b'\x00\x0a\x00\x0b' + b'\x00'*4 + short('PLAIN') + long('\x00test\x00test') + short('en_US')
+    connection.sendall(frame(start_ok)); assert receive(connection)[2][:4] == TUNE[:4]
+    connection.sendall(frame(b'\x00\x0a\x00\x1f' + TUNE[4:]) +
+                       frame(b'\x00\x0a\x00\x28' + short('VHOST1') + b'\x00\x00'))
+    return connection, receive(connection)
+
+
+def reload_smoke(binary, directory):
+    """REWRITE RELOAD changes the user map for new connections; a broken file keeps the old map."""
+    user_map = directory / 'vhost-users.conf'; user_map.write_text('other VHOST4\n')
+    sock = str(directory / 'control')
+    with socket.socket() as listener, socket.socket() as reserve, \
+            open(directory / 'proxy.log', 'w') as log, concurrent.futures.ThreadPoolExecutor(1) as pool:
+        listener.bind(('127.0.0.1', 0)); listener.listen(1); listener.settimeout(20)
+        reserve.bind(('127.0.0.1', 0)); proxy_port = reserve.getsockname()[1]; reserve.close()
+        process = subprocess.Popen([binary, '--controlSocket', sock, '--logDirectory', str(directory / 'logs'),
+                                    '--rewriteVhostFrom', 'VHOST1', '--rewriteVhostUserMap', str(user_map),
+                                    '--rewriteClassicQueuesToQuorum'], stdout=log, stderr=log)
+        try:
+            deadline = time.monotonic() + 20
+            while not pathlib.Path(sock).exists():
+                assert time.monotonic() < deadline, 'control socket missing'
+                time.sleep(0.1)
+            # MAP DEFAULT routes every destination vhost the user map produces.
+            for command in (f'BACKEND ADD backend local 127.0.0.1 {listener.getsockname()[1]}',
+                            'FARM ADD farm round-robin backend', 'MAP DEFAULT farm',
+                            f'LISTEN START {proxy_port}'):
+                assert control(sock, command).strip() == '', command
+
+            # 'test' is not mapped yet: refused.
+            connection, (kind, _, payload) = open_client(proxy_port)
+            with connection:
+                assert payload[:4] == CLOSE and struct.unpack('!H', payload[4:6])[0] == 530, payload
+
+            # Map it and reload while running: the next connection goes to VHOST3.
+            user_map.write_text('other VHOST4\ntest VHOST3\n')
+            reply = control(sock, 'REWRITE RELOAD')
+            assert reply.startswith('OK: reloaded 2 user vhost mappings'), reply
+            future = pool.submit(broker, listener, None, 'VHOST3', 'usermap')
+            connection, (_, _, payload) = open_client(proxy_port)
+            with connection:
+                assert payload[:4] == b'\x00\x0a\x00\x29', payload
+                data = (frame(b'', kind=8) + frame(declare('classic'), channel=7) +
+                        frame(b'body-unchanged', channel=7, kind=3))
+                connection.sendall(data)
+                assert receive(connection) == (1, 7, declare_ok('jobs'))
+            future.result(timeout=20)
+
+            # A broken file is refused and the loaded map stays active.
+            user_map.write_text('test VHOST3\ntest VHOST5\n')
+            reply = control(sock, 'REWRITE RELOAD')
+            assert reply.startswith("ERROR: User vhost map line 2: duplicate user 'test'"), reply
+            assert 'test -> VHOST3' in control(sock, 'REWRITE PRINT')
+        except Exception:
+            log.flush()
+            print((directory / 'proxy.log').read_text())
+            raise
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill(); process.wait()
+    print('PASS real proxy sockets: runtime user map reload')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', help='Path to Linux amqpprox executable')
     args = parser.parse_args()
+    binary = str(pathlib.Path(args.binary).resolve())
     cases = ((False, 'disabled'), (False, 'convert'), (True, 'convert'),
              (False, 'reject'), (True, 'reject'), (False, 'passthrough'),
-             (False, 'usermap'), (True, 'usermap'), (False, 'usermap-refused'))
+             (False, 'usermap'), (True, 'usermap'), (False, 'usermap-refused'),
+             (False, 'vhost-missing'))
     for tls, mode in cases:
         with tempfile.TemporaryDirectory(prefix='amqpprox-wire-') as directory:
-            smoke(str(pathlib.Path(args.binary).resolve()), pathlib.Path(directory), tls, mode)
+            smoke(binary, pathlib.Path(directory), tls, mode)
+    with tempfile.TemporaryDirectory(prefix='amqpprox-wire-') as directory:
+        reload_smoke(binary, pathlib.Path(directory))
     print('WIRE SMOKE PASSED')
 
 

@@ -44,7 +44,8 @@ empty vhost as `/`, both in the
 client's `Connection.Open` and in `--rewriteVhostFrom`. With the default source
 `/`, both spellings are rewritten. The log line `Rewriting vhost '' -> 'VHOST2'`
 shows which one the client sent.
-Configuration is immutable for the lifetime of the process. Restart to change
+Configuration is fixed for the lifetime of the process, except the user vhost
+map, which can be reloaded (see below). Restart to change
 it. There is **one source vhost per process**, shared by all its listeners.
 Without a user map, all its connections go to the one destination; to give
 independent application instances their own destination, use the
@@ -87,7 +88,23 @@ amqpprox --rewriteVhostFrom / --rewriteVhostUserMap /etc/amqpprox/vhost-users.co
 - Lines are `username vhost` separated by spaces or tabs; blank lines and lines
   starting with `#` are ignored, and Windows line endings are accepted.
   Malformed lines, duplicate users and invalid vhost names stop the proxy at
-  startup with the line number. Restart after changing the file.
+  startup with the line number.
+- **Reload without restart:** after editing the file, run
+  `amqpprox_ctl <control socket> REWRITE RELOAD` (with the RPM:
+  `systemctl reload amqpprox-rewrite`). It answers `OK: reloaded N user vhost
+  mappings` and logs the same. New connections use the new map; established
+  connections keep their vhost until they reconnect, so removing a user does
+  not disconnect it. An invalid file is refused with `ERROR: ...` and the line
+  number, and the current map stays active. `REWRITE PRINT` shows the active
+  mappings. Only the map is reloaded: the other options, and turning per-user
+  mapping on or off, still need a restart.
+- **Destination vhost missing:** create each destination vhost on RabbitMQ
+  before mapping a user to it. The proxy routes by the destination name, so it
+  first needs a route (`MAP FARM`/`MAP BACKEND` for it, or `MAP DEFAULT`);
+  without one the client gets `506 No known broker mapping for vhost <name>`.
+  With a route but no such vhost on the broker, RabbitMQ refuses
+  `Connection.Open` and the client receives RabbitMQ's own reason, for example
+  `530 NOT_ALLOWED - vhost app2 not found`; the proxy logs it as an error.
 - The log shows `Rewriting vhost '/' -> 'app1' for user 'userA'`, and
   `Refusing connection to vhost '/': amqpprox: no vhost mapping for user
   '<name>'` for unmapped users.
@@ -254,6 +271,9 @@ Set it back with `LOG FILE 3` afterwards; level 5 (TRACE) can log credentials.
 | --- | --- | --- |
 | INFO (3) | `Rewriting vhost '<client>' -> '<target>'` | Connection matched; `''` means the client sent an empty vhost; with a user map followed by `for user '<name>'` |
 | WARN (2) | `Refusing connection to vhost '<client>': amqpprox: no vhost mapping for user '<name>'` | User not in the user map and no `--rewriteVhostTo` default |
+| INFO (3) | `Reloaded <n> user vhost mappings from '<file>'` | `REWRITE RELOAD` / `systemctl reload` succeeded |
+| WARN (2) | `User vhost map reload failed, keeping the current map: <reason>` | Reload refused; the previous map stays active |
+| ERROR (1) | `Received exception: Expected ...OpenOk..., got: Close, Received method from server: Close = [replyCode: 530 ...` | RabbitMQ refused Connection.Open, e.g. the destination vhost does not exist; the client receives the same code and text |
 | DEBUG (4) | `Converted Queue.Declare of '<queue>' on channel <n> to quorum` | Declaration rewritten |
 | DEBUG (4) | `Dropping classic-only argument <arg>` | Argument removed from a converted declaration |
 | DEBUG (4) | `Forwarding unconvertible declaration unchanged: <reason>` | Pass-through mode forwarded it as sent |

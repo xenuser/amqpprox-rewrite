@@ -227,7 +227,7 @@ void Server::doAccept(int port, bool secure)
                                               d_authIntercept,
                                               secure,
                                               d_limitManager,
-                                              d_rewriteConfig);
+                                              rewriteConfig());
 
                 {
                     std::lock_guard<std::mutex> lg(d_mutex);
@@ -285,6 +285,26 @@ void Server::setAuthIntercept(
 {
     std::lock_guard<std::mutex> lg(d_mutex);
     d_authIntercept = authIntercept;
+}
+
+void Server::setUserVhosts(std::shared_ptr<const UserVhostMap> userVhosts)
+{
+    std::lock_guard<std::mutex> lg(d_rewriteMutex);
+    if (!d_rewriteConfig.userVhosts) {
+        throw std::invalid_argument(
+            "Per-user vhost mapping is not enabled; start the proxy with "
+            "--rewriteVhostUserMap");
+    }
+    if (!userVhosts || userVhosts->empty()) {
+        throw std::invalid_argument("The user vhost map contains no mappings");
+    }
+    d_rewriteConfig.userVhosts = std::move(userVhosts);
+}
+
+RewriteConfig Server::rewriteConfig() const
+{
+    std::lock_guard<std::mutex> lg(d_rewriteMutex);
+    return d_rewriteConfig;
 }
 
 std::shared_ptr<Session> Server::getSession(uint64_t identifier)

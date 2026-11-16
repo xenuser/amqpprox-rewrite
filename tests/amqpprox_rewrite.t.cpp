@@ -3,6 +3,7 @@
 
 #include <amqpprox_buffer.h>
 #include <amqpprox_bufferpool.h>
+#include <amqpprox_closeerror.h>
 #include <amqpprox_connector.h>
 #include <amqpprox_connectorutil.h>
 #include <amqpprox_eventsource.h>
@@ -615,6 +616,34 @@ TEST(Rewrite, UserMapRefusesUnmappedUsers)
     Harness h(userMapConfig("shared"), "/", FRAME_MAX, "userC");
     ASSERT_EQ(h.connector.state(), Connector::State::OPEN);
     EXPECT_EQ(h.state.getVirtualHost(), "shared");
+}
+
+TEST(Rewrite, BrokerRefusingOpenReachesClient)
+{
+    // The destination vhost does not exist on the broker: its Connection.Close
+    // in reply to Connection.Open must surface as CloseError, which the
+    // session relays to the client, instead of being ignored.
+    Harness h(userMapConfig(), "/", FRAME_MAX, "userB", true);
+    receive(h.connector, ConnectorUtil::synthesizedStart(), FlowType::EGRESS);
+    receive(h.connector, ConnectorUtil::synthesizedTune(), FlowType::EGRESS);
+    ASSERT_EQ(h.connector.state(), Connector::State::OPEN_SENT);
+
+    methods::Close close;
+    close.setReply(530, "NOT_ALLOWED - vhost app2 not found", 10, 40);
+    Bytes  b(4096);
+    Buffer buf(b.data(), b.size());
+    ASSERT_TRUE(Method::encode(buf, close));
+    Method m;
+    ASSERT_TRUE(Method::decode(&m, b.data(), buf.offset()));
+    try {
+        h.connector.receive(m, FlowType::EGRESS);
+        ADD_FAILURE() << "expected CloseError";
+    }
+    catch (const CloseError &error) {
+        EXPECT_EQ(error.closeMethod().replyCode(), 530);
+        EXPECT_EQ(error.closeMethod().replyString(),
+                  "NOT_ALLOWED - vhost app2 not found");
+    }
 }
 
 TEST(Rewrite, UserMapLeavesOtherVhostsAlone)

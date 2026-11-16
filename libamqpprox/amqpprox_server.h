@@ -62,7 +62,8 @@ class Server {
     std::mutex                      d_mutex;
     std::shared_ptr<HostnameMapper> d_hostnameMapper;
     std::string                     d_localHostname;
-    const RewriteConfig             d_rewriteConfig;
+    mutable std::mutex              d_rewriteMutex;
+    RewriteConfig                   d_rewriteConfig;  // GUARDED BY d_rewriteMutex
     std::shared_ptr<AuthInterceptInterface> d_authIntercept;
     DataRateLimitManager                   *d_limitManager;  // HELD NOT OWNED
 
@@ -137,7 +138,21 @@ class Server {
     void setAuthIntercept(
         const std::shared_ptr<AuthInterceptInterface> &authIntercept);
 
+    /**
+     * \brief Replace the user to vhost map used for new connections. Note
+     * that this does not change the vhost of any established sessions.
+     * \param userVhosts the new, nonempty map
+     * \throw std::invalid_argument if per-user mapping was not configured at
+     * startup or the map is empty; the current map is kept
+     */
+    void setUserVhosts(std::shared_ptr<const UserVhostMap> userVhosts);
+
     // ACCESSORS
+    /**
+     * \return the rewrite configuration new sessions start with
+     */
+    RewriteConfig rewriteConfig() const;
+
     /**
      * \brief Get a particular session for a specified ID
      * \param identifier a unique session identifier

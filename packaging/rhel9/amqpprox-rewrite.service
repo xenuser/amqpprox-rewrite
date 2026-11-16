@@ -15,6 +15,9 @@ LogsDirectoryMode=0750
 UMask=0077
 ExecStart=/usr/bin/amqpprox --controlSocket /run/amqpprox/control --logDirectory /var/log/amqpprox $AMQPPROX_OPTIONS
 ExecStartPost=/usr/libexec/amqpprox-apply-config /run/amqpprox/control /etc/amqpprox/control.conf
+# systemctl reload: re-read /etc/amqpprox/vhost-users.conf without dropping
+# connections; fails (and keeps the current map) if the file is invalid.
+ExecReload=/bin/sh -c 'out=$$(/usr/bin/amqpprox_ctl /run/amqpprox/control REWRITE RELOAD); echo "$$out"; case "$$out" in OK*) exit 0;; *) exit 1;; esac'
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=45
