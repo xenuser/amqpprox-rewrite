@@ -24,13 +24,21 @@ AMQP URI, `/` as the vhost is normally encoded as `%2F` in its path.
 
 | Option | Meaning |
 | --- | --- |
-| `--rewriteVhostFrom /` | Exact, case-sensitive source vhost; defaults to `/` |
+| `--rewriteVhostFrom /` | Exact, case-sensitive source vhost; defaults to `/`. An empty vhost is treated as `/` |
 | `--rewriteVhostTo customer-a/app` | Destination; enabling vhost rewriting |
 | `--rewriteClassicQueuesToQuorum` | Also rewrite queue declarations on matching connections |
 | `--passThroughUnconvertibleQueues` | Forward declarations that cannot become quorum queues unchanged instead of closing the connection (requires the quorum option) |
 
 A source vhost or quorum option without a nonempty destination is rejected.
-Vhost values must be nonempty, at most 255 bytes, and contain no NUL.
+Vhost values must be at most 255 bytes and contain no NUL; the destination
+must be nonempty.
+
+Some legacy clients send an empty vhost instead of `/`. In an AMQP URI,
+`amqp://host` selects `/`, while `amqp://host/` with a trailing slash selects the
+empty vhost. When matching, the proxy treats an empty vhost as `/`, both in the
+client's `Connection.Open` and in `--rewriteVhostFrom`. With the default source
+`/`, both spellings are rewritten. The log line `Rewriting vhost '' -> 'VHOST2'`
+shows which one the client sent.
 Configuration is immutable for the lifetime of the process. Restart to change
 it. There is **one mapping per process**, shared by all its listeners. Use
 separate processes/configurations for multiple independent customer mappings.

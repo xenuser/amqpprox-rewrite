@@ -189,8 +189,9 @@ void Connector::receive(const Method &method, FlowType direction)
         decodeMethod(&d_open, method, methodPayload, direction);
 
         if (d_rewriteConfig.matches(d_open.virtualHost())) {
-            LOG_INFO << "Rewriting vhost " << d_open.virtualHost()
-                     << " -> " << d_rewriteConfig.targetVhost;
+            // Quoted, so that an empty client vhost is visible in the log.
+            LOG_INFO << "Rewriting vhost '" << d_open.virtualHost() << "' -> '"
+                     << d_rewriteConfig.targetVhost << "'";
             d_open.setVirtualHost(d_rewriteConfig.targetVhost);
             d_rewriteQueues = d_rewriteConfig.quorumQueues;
         }

@@ -389,6 +389,39 @@ TEST(Rewrite, DisabledAndNonmatchingConnectionsStayByteExact)
     }
 }
 
+TEST(Rewrite, EmptyVhostIsTreatedAsSlash)
+{
+    RewriteConfig slash{"/", "legacy-app", true};
+    EXPECT_TRUE(slash.matches("/"));
+    EXPECT_TRUE(slash.matches(""));
+    EXPECT_FALSE(slash.matches("other"));
+
+    // An empty configured source means "/" as well.
+    RewriteConfig empty{"", "legacy-app", true};
+    EXPECT_NO_THROW(empty.validate());
+    EXPECT_TRUE(empty.matches("/"));
+    EXPECT_TRUE(empty.matches(""));
+
+    // Named sources still match exactly.
+    RewriteConfig named{"VHOST1", "legacy-app", true};
+    EXPECT_FALSE(named.matches(""));
+    EXPECT_FALSE(named.matches("/"));
+}
+
+TEST(Rewrite, EmptyClientVhostIsRewrittenWithQueues)
+{
+    Harness h({"/", "legacy-app", true}, "");
+    ASSERT_EQ(h.connector.state(), Connector::State::OPEN);
+    EXPECT_EQ(h.state.getVirtualHost(), "legacy-app");
+    EXPECT_TRUE(h.connector.rewriteQueues());
+
+    auto            data = wire(declare());
+    PacketProcessor p(h.state, h.connector);
+    process(p, data);
+    EXPECT_EQ(copy(p.egressWrite()),
+              wire(declare(field("x-queue-type", "quorum"))));
+}
+
 TEST(Rewrite, CustomSourceAndVhostOnlyMode)
 {
     Harness h({"VHOST1", "VHOST2", false}, "VHOST1");

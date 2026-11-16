@@ -121,7 +121,8 @@ int main(int argc, char *argv[])
         "Simple config mode: destination DNS address")(
         "rewriteVhostFrom",
         po::value<std::string>(&rewriteConfig.sourceVhost)->default_value("/"),
-        "Exact client vhost to rewrite (requires rewriteVhostTo)")(
+        "Exact client vhost to rewrite (requires rewriteVhostTo); an empty "
+        "vhost is treated as /")(
         "rewriteVhostTo",
         po::value<std::string>(&rewriteConfig.targetVhost),
         "Destination vhost; routing/auth/limits use this name")(
