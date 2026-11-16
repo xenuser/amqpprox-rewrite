@@ -13,3 +13,7 @@ generated_docs/
 __pycache__/
 .venv/
 rabbitmq43-results*.json
+
+# .NET test client build output
+tests/dotnet-legacy-client/bin/
+tests/dotnet-legacy-client/obj/

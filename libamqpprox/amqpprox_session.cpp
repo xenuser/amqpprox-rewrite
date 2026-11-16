@@ -1009,8 +1009,18 @@ void Session::handleSessionError(const char               *action,
                       << ConnectionSummary(*this)
                       << " direction=" << direction;
         }
+        else if (d_connector.closeHandshakeSeen()) {
+            // Socket teardown after an AMQP close is expected.
+            LOG_INFO << "Connection closed after AMQP Connection.Close: "
+                     << action << "received error_code=" << ec
+                     << " conn=" << ConnectionSummary(*this)
+                     << " direction=" << direction;
+        }
         else {
-            LOG_WARN << action << "received error_code=" << ec << " "
+            LOG_WARN << "Lost "
+                     << (direction == FlowType::INGRESS ? "client" : "broker")
+                     << " connection without AMQP Connection.Close: "
+                     << action << "received error_code=" << ec << " "
                      << TlsUtil::augmentTlsError(ec)
                      << " conn=" << ConnectionSummary(*this)
                      << " direction=" << direction;

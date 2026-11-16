@@ -102,6 +102,8 @@ class Connector {
     std::string           d_localHostname;
     const RewriteConfig   d_rewriteConfig;
     bool                  d_rewriteQueues = false;
+    bool                  d_vhostRewritten = false;
+    bool                  d_closeSeen      = false;
 
     template <typename T>
     void sendResponse(const T &response, bool sendToIngressSide);
@@ -121,6 +123,22 @@ class Connector {
               const RewriteConfig &rewriteConfig = {});
 
     bool rewriteQueues() const { return d_rewriteQueues; }
+    bool vhostRewritten() const { return d_vhostRewritten; }
+
+    /**
+     * \brief Record that a Connection.Close or CloseOk passed through while
+     * open, so a following socket teardown is known to be expected
+     */
+    void noteCloseSeen() { d_closeSeen = true; }
+
+    /**
+     * \return true if the AMQP close handshake started, either passed
+     * through while open or synthesized and completed by the proxy
+     */
+    bool closeHandshakeSeen() const
+    {
+        return d_closeSeen || d_state == State::CLOSED;
+    }
     bool passThroughUnconvertibleQueues() const
     {
         return d_rewriteConfig.passThroughUnconvertible;

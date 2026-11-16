@@ -193,7 +193,8 @@ void Connector::receive(const Method &method, FlowType direction)
             LOG_INFO << "Rewriting vhost '" << d_open.virtualHost() << "' -> '"
                      << d_rewriteConfig.targetVhost << "'";
             d_open.setVirtualHost(d_rewriteConfig.targetVhost);
-            d_rewriteQueues = d_rewriteConfig.quorumQueues;
+            d_rewriteQueues  = d_rewriteConfig.quorumQueues;
+            d_vhostRewritten = true;
         }
         // Routing, auth intercept, limits, and statistics use the effective
         // broker vhost, consistently with the outgoing Connection.Open.

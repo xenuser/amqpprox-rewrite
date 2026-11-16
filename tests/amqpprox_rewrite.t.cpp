@@ -422,6 +422,69 @@ TEST(Rewrite, EmptyClientVhostIsRewrittenWithQueues)
               wire(declare(field("x-queue-type", "quorum"))));
 }
 
+TEST(Rewrite, DecodeCloseReason)
+{
+    const std::string text = "PRECONDITION_FAILED - inequivalent arg";
+    Bytes             channelClose{0, 20, 0, 40, 1, 150};  // reply code 406
+    channelClose.push_back(static_cast<uint8_t>(text.size()));
+    channelClose.insert(channelClose.end(), text.begin(), text.end());
+    channelClose.insert(channelClose.end(), {0, 50, 0, 10});
+
+    CloseReason reason;
+    ASSERT_TRUE(decodeCloseReason(&reason, frame(channelClose, 3)));
+    EXPECT_FALSE(reason.connection);
+    EXPECT_EQ(reason.replyCode, 406);
+    EXPECT_EQ(reason.replyText, text);
+    EXPECT_EQ(reason.classId, 50);
+    EXPECT_EQ(reason.methodId, 10);
+
+    Bytes connectionClose{0, 10, 0, 50, 1, 64, 2, 'n', 'o', 0, 0, 0, 0};
+    ASSERT_TRUE(decodeCloseReason(&reason, frame(connectionClose, 0)));
+    EXPECT_TRUE(reason.connection);
+    EXPECT_EQ(reason.replyCode, 320);
+    EXPECT_EQ(reason.replyText, "no");
+
+    // Other methods, other frame types and truncated frames are ignored.
+    EXPECT_FALSE(decodeCloseReason(&reason, frame(declare())));
+    EXPECT_FALSE(decodeCloseReason(&reason, frame(channelClose, 3, 3)));
+    for (std::size_t n = 4; n < channelClose.size(); ++n) {
+        Bytes cut(channelClose.begin(), channelClose.begin() + n);
+        EXPECT_FALSE(decodeCloseReason(&reason, frame(cut, 3))) << n;
+    }
+}
+
+TEST(Rewrite, BrokerCloseIsForwardedUnchanged)
+{
+    // Logged on rewritten connections, but the bytes reach the client as is.
+    Harness h;
+    EXPECT_TRUE(h.connector.vhostRewritten());
+    auto            data = wire(Bytes{0, 20, 0, 40, 1, 150, 0, 0, 50, 0, 10}, 3);
+    PacketProcessor p(h.state, h.connector);
+    process(p, data, FlowType::EGRESS);
+    EXPECT_EQ(copy(p.ingressWrite()), data);
+}
+
+TEST(Rewrite, PassedThroughCloseIsRemembered)
+{
+    for (auto cfg : {RewriteConfig{}, RewriteConfig{"/", "legacy-app", true}}) {
+        Harness h(cfg);
+        EXPECT_FALSE(h.connector.closeHandshakeSeen());
+
+        auto            other = wire(declare(), 1);
+        PacketProcessor first(h.state, h.connector);
+        process(first, other);
+        EXPECT_FALSE(h.connector.closeHandshakeSeen());
+
+        // Client Connection.Close passes through and is remembered.
+        auto close = wire(Bytes{0, 10, 0, 50, 0, 200, 0, 0, 0, 0, 0}, 0);
+        PacketProcessor second(h.state, h.connector);
+        process(second, close);
+        EXPECT_EQ(copy(second.egressWrite()), close);
+        EXPECT_EQ(h.connector.state(), Connector::State::OPEN);
+        EXPECT_TRUE(h.connector.closeHandshakeSeen());
+    }
+}
+
 TEST(Rewrite, CustomSourceAndVhostOnlyMode)
 {
     Harness h({"VHOST1", "VHOST2", false}, "VHOST1");

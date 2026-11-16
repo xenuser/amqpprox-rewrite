@@ -62,6 +62,23 @@ std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
                                          std::size_t  maxFrameSize,
                                          bool passThroughUnconvertible = false);
 
+/**
+ * \brief Reason carried by a Connection.Close or Channel.Close method
+ */
+struct CloseReason {
+    bool        connection = false;  // Connection.Close, else Channel.Close
+    uint16_t    replyCode  = 0;
+    std::string replyText;
+    uint16_t    classId  = 0;  // failing method, 0 if none
+    uint16_t    methodId = 0;
+};
+
+/**
+ * \brief Decode a Connection.Close or Channel.Close frame for diagnostics.
+ * Never throws: returns false for other frames and for malformed ones.
+ */
+bool decodeCloseReason(CloseReason *reason, const Frame &frame);
+
 }
 }
 #endif

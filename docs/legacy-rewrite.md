@@ -33,9 +33,12 @@ A source vhost or quorum option without a nonempty destination is rejected.
 Vhost values must be at most 255 bytes and contain no NUL; the destination
 must be nonempty.
 
-Some legacy clients send an empty vhost instead of `/`. In an AMQP URI,
-`amqp://host` selects `/`, while `amqp://host/` with a trailing slash selects the
-empty vhost. When matching, the proxy treats an empty vhost as `/`, both in the
+Some legacy clients send an empty vhost instead of `/`. Per the AMQP URI
+specification, `amqp://host` selects `/` and `amqp://host/` with a trailing slash
+selects the empty vhost, and some clients follow that. RabbitMQ.Client 6.8.1 for
+.NET maps both URIs to `/`, so with that library an empty vhost comes from an
+explicitly configured empty `VirtualHost`. When matching, the proxy treats an
+empty vhost as `/`, both in the
 client's `Connection.Open` and in `--rewriteVhostFrom`. With the default source
 `/`, both spellings are rewritten. The log line `Rewriting vhost '' -> 'VHOST2'`
 shows which one the client sent.
@@ -184,6 +187,40 @@ RabbitMQ default queue type to quorum and omit the quorum rewrite option. An
 explicit classic declaration overrides that default; the rewrite option handles
 that case. RabbitMQ's relaxed queue-type redeclaration setting is not required
 for this implementation and should not be enabled just for this adapter.
+
+## Diagnostics
+
+Log lines on rewritten connections, with their verbosity level. The console
+shows levels up to `--consoleVerbosity`; files in the log directory record up
+to level 3 (INFO) by default. To include the DEBUG lines at runtime, without a
+restart:
+
+```sh
+amqpprox_ctl /run/amqpprox/control LOG FILE 4
+```
+
+Set it back with `LOG FILE 3` afterwards; level 5 (TRACE) can log credentials.
+
+| Level | Line starts with | Meaning |
+| --- | --- | --- |
+| INFO (3) | `Rewriting vhost '<client>' -> '<target>'` | Connection matched; `''` means the client sent an empty vhost |
+| DEBUG (4) | `Converted Queue.Declare of '<queue>' on channel <n> to quorum` | Declaration rewritten |
+| DEBUG (4) | `Dropping classic-only argument <arg>` | Argument removed from a converted declaration |
+| DEBUG (4) | `Forwarding unconvertible declaration unchanged: <reason>` | Pass-through mode forwarded it as sent |
+| ERROR (1) | `Rejected Queue.Declare on channel <n>, reply code <code>: <reason>` | Proxy refuses it; also shows how many preceding frames/bytes are forwarded and how many bytes are discarded |
+| WARN (2) | `Closing connection, rejected Queue.Declare` | The proxy sends the client Connection.Close; includes the connection summary |
+| WARN (2) | `Broker closed channel <n>: <code> <text> (class, method)` | RabbitMQ refused something, for example `406 PRECONDITION_FAILED - inequivalent arg 'x-queue-type'` for a queue that already exists as classic |
+| WARN (2) | `Broker closed connection: <code> <text>` | RabbitMQ closed the whole connection |
+| INFO (3) | `Connection closed after AMQP Connection.Close` | Normal end of a connection (either side sent Connection.Close) |
+| WARN (2) | `Lost client connection without AMQP Connection.Close` | The client dropped TCP without Connection.Close (crash, abort, network) |
+| WARN (2) | `Lost broker connection without AMQP Connection.Close` | The broker side dropped TCP without Connection.Close |
+
+When a legacy application reconnects in a loop, look for `Rejected
+Queue.Declare` (the proxy refused a declaration) and `Broker closed channel`
+(RabbitMQ refused the rewritten declaration or a later operation). The
+[.NET legacy client check](../tests/dotnet-legacy-client/README.md) reproduces
+typical declarations of applications using RabbitMQ.Client 6.x through the
+proxy.
 
 ## Migration considerations and checklist
 

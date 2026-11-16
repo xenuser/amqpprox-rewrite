@@ -303,7 +303,45 @@ std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
     put32(out, static_cast<uint32_t>(table.size()));
     out.insert(out.end(), table.begin(), table.end());
     out.push_back(0xce);
+
+    LOG_DEBUG << "Converted Queue.Declare of '" << name << "' on channel "
+              << frame.channel << " to quorum";
     return out;
+}
+
+bool decodeCloseReason(CloseReason *reason, const Frame &frame)
+{
+    if (frame.type != 1 || frame.length < 4) {
+        return false;
+    }
+    const auto *p = static_cast<const uint8_t *>(frame.payload);
+    const bool  connection = p[0] == 0 && p[1] == 10 && p[2] == 0 && p[3] == 50;
+    const bool  channel    = p[0] == 0 && p[1] == 20 && p[2] == 0 && p[3] == 40;
+    if (!connection && !channel) {
+        return false;
+    }
+
+    try {
+        Cursor c(p, frame.length);
+        c.skip(4);  // class, method
+        auto code = static_cast<uint16_t>(c.byte() << 8);
+        code |= c.byte();
+        auto text = c.string(c.byte());
+        auto classId = static_cast<uint16_t>(c.byte() << 8);
+        classId |= c.byte();
+        auto methodId = static_cast<uint16_t>(c.byte() << 8);
+        methodId |= c.byte();
+
+        reason->connection = connection;
+        reason->replyCode  = code;
+        reason->replyText  = std::move(text);
+        reason->classId    = classId;
+        reason->methodId   = methodId;
+        return true;
+    }
+    catch (const QueueRewriteError &) {
+        return false;
+    }
 }
 
 }

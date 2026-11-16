@@ -36,6 +36,7 @@
 
 #include <iomanip>
 #include <iostream>
+#include <string>
 
 namespace Bloomberg {
 namespace amqpprox {
@@ -104,6 +105,19 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
             }
             catch (const QueueRewriteError &error) {
                 // Forward what preceded the rejected frame; discard the rest.
+                const auto *start =
+                    static_cast<const uint8_t *>(readBuffer.originalPtr());
+                const std::size_t forwarded =
+                    static_cast<const uint8_t *>(currFrame) - start;
+                LOG_ERROR << "Rejected Queue.Declare on channel "
+                          << frame.channel << ", reply code "
+                          << error.replyCode() << ": " << error.what()
+                          << ". Forwarding " << (frameCount - 1)
+                          << " preceding frame(s) (" << forwarded
+                          << " bytes), discarding "
+                          << (readBuffer.offset() - forwarded)
+                          << " bytes from the rejected frame on, then "
+                             "closing the client connection";
                 d_rewriteError = error;
                 --frameCount;
                 remaining += static_cast<const uint8_t *>(nextFrame) -
@@ -125,6 +139,36 @@ void PacketProcessor::process(FlowType direction, const Buffer &readBuffer)
                 const auto *end = static_cast<const uint8_t *>(nextFrame);
                 d_rewritten->insert(d_rewritten->end(), begin, end);
             }
+        }
+
+        // Connection.Close/CloseOk pass through unseen by the connector while
+        // open; remember them so the socket teardown is not logged as a loss.
+        if (1 == frame.type && d_connector.state() == Connector::State::OPEN &&
+            frame.length >= 4) {
+            const auto *p = static_cast<const uint8_t *>(frame.payload);
+            if (p[0] == 0 && p[1] == 10 && p[2] == 0 &&
+                (p[3] == 50 || p[3] == 51)) {
+                d_connector.noteCloseSeen();
+            }
+        }
+
+        // On rewritten connections, make broker refusals visible: a channel
+        // or connection error caused by a rewritten declaration would
+        // otherwise pass through to the client without a trace here.
+        CloseReason closeReason;
+        if (direction == FlowType::EGRESS &&
+            d_connector.state() == Connector::State::OPEN &&
+            d_connector.vhostRewritten() &&
+            decodeCloseReason(&closeReason, frame)) {
+            LOG_WARN << "Broker closed "
+                     << (closeReason.connection ? "connection" : "channel ")
+                     << (closeReason.connection
+                             ? std::string()
+                             : std::to_string(frame.channel))
+                     << ": " << closeReason.replyCode << " "
+                     << closeReason.replyText
+                     << " (class " << closeReason.classId << ", method "
+                     << closeReason.methodId << ")";
         }
 
         if (1 == frame.type && d_connector.state() != Connector::State::OPEN) {

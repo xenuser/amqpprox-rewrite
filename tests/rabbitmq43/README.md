@@ -192,6 +192,8 @@ same client flags. Each process needs a distinct control socket and log folder.
 
 ## Additional admin/application acceptance scenarios
 
+- Run the [.NET legacy client check](../dotnet-legacy-client/README.md) with
+  the application's client library version against the same proxy and vhost.
 - Run the real Windows application's complete workflow, including recovery and
   temporary/RPC queue creation. Record every unsupported declaration.
 - Stop one broker during a confirmed publish/consume workload in the isolated
