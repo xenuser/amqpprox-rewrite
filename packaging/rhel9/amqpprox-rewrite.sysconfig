@@ -2,4 +2,8 @@
 # Do not use --listenPort here: control.conf configures TLS/backends first.
 # Add --passThroughUnconvertibleQueues to forward exclusive/temporary queue
 # declarations unchanged instead of closing the connection.
+# For one destination vhost per application user, maintain
+# /etc/amqpprox/vhost-users.conf and replace --rewriteVhostTo ... with
+# --rewriteVhostUserMap /etc/amqpprox/vhost-users.conf (keep --rewriteVhostTo
+# as well only if unmapped users should share a default vhost).
 AMQPPROX_OPTIONS="--rewriteVhostFrom / --rewriteVhostTo customer-a/legacy-app --rewriteClassicQueuesToQuorum --consoleVerbosity 3"

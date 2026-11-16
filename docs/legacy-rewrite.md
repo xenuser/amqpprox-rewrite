@@ -25,11 +25,13 @@ AMQP URI, `/` as the vhost is normally encoded as `%2F` in its path.
 | Option | Meaning |
 | --- | --- |
 | `--rewriteVhostFrom /` | Exact, case-sensitive source vhost; defaults to `/`. An empty vhost is treated as `/` |
-| `--rewriteVhostTo customer-a/app` | Destination; enabling vhost rewriting |
+| `--rewriteVhostTo customer-a/app` | Destination; enabling vhost rewriting. With a user map: destination for users not in the map |
+| `--rewriteVhostUserMap FILE` | Destination per AMQP user from a config file, see [per-user vhost mapping](#per-user-vhost-mapping) |
 | `--rewriteClassicQueuesToQuorum` | Also rewrite queue declarations on matching connections |
 | `--passThroughUnconvertibleQueues` | Forward declarations that cannot become quorum queues unchanged instead of closing the connection (requires the quorum option) |
 
-A source vhost or quorum option without a nonempty destination is rejected.
+A source vhost or quorum option without a destination (`--rewriteVhostTo` or
+`--rewriteVhostUserMap`) is rejected.
 Vhost values must be at most 255 bytes and contain no NUL; the destination
 must be nonempty.
 
@@ -43,9 +45,56 @@ client's `Connection.Open` and in `--rewriteVhostFrom`. With the default source
 `/`, both spellings are rewritten. The log line `Rewriting vhost '' -> 'VHOST2'`
 shows which one the client sent.
 Configuration is immutable for the lifetime of the process. Restart to change
-it. There is **one mapping per process**, shared by all its listeners. Use
-separate processes/configurations for multiple independent customer mappings.
+it. There is **one source vhost per process**, shared by all its listeners.
+Without a user map, all its connections go to the one destination; to give
+independent application instances their own destination, use the
+[per-user vhost mapping](#per-user-vhost-mapping) or separate processes.
 Unmatched vhosts continue through unchanged; this is not an access-control rule.
+
+### Per-user vhost mapping
+
+When several instances of a legacy application all connect to `/`, but used to
+have a broker each, mapping them to one destination vhost would merge their
+queues: identical queue names become shared queues, and instances consume each
+other's messages without any error. Give each instance its own broker user and
+map users to destination vhosts in a config file:
+
+```text
+# /etc/amqpprox/vhost-users.conf: one "username vhost" pair per line
+userA  app1
+userB  app2
+```
+
+```sh
+amqpprox --rewriteVhostFrom / --rewriteVhostUserMap /etc/amqpprox/vhost-users.conf \
+  --rewriteClassicQueuesToQuorum ...
+```
+
+- The proxy reads the username from the client's SASL PLAIN login, before
+  `Connection.Open`. A connection of `userA` to `/` goes to `app1`, one of
+  `userB` to `app2`. Usernames are case-sensitive, as in RabbitMQ.
+- Users not in the file go to `--rewriteVhostTo` if it is set. Without it,
+  their connection is refused with `Connection.Close` 530 (`NOT_ALLOWED`) and
+  `amqpprox: no vhost mapping for user '<name>'`, before the proxy contacts the
+  broker. Only connections to the source vhost are affected; a mapped user
+  connecting to another vhost is not rewritten.
+- The mapping uses the username the client sends; the broker still
+  authenticates it. **Grant each broker user permissions only on its own
+  vhost.** A wrong mapping then fails with an access error instead of mixing
+  applications.
+- Every destination vhost needs a route: a `MAP FARM`/`MAP BACKEND` line per
+  vhost in the control configuration, or `MAP DEFAULT <farm>` for all.
+- Lines are `username vhost` separated by spaces or tabs; blank lines and lines
+  starting with `#` are ignored, and Windows line endings are accepted.
+  Malformed lines, duplicate users and invalid vhost names stop the proxy at
+  startup with the line number. Restart after changing the file.
+- The log shows `Rewriting vhost '/' -> 'app1' for user 'userA'`, and
+  `Refusing connection to vhost '/': amqpprox: no vhost mapping for user
+  '<name>'` for unmapped users.
+
+Only SASL PLAIN carries a username the proxy can read, which is what
+RabbitMQ.Client, the Java client and Pika use by default. Mechanisms such as
+`EXTERNAL` (client certificates) are treated as unmapped.
 
 The destination name is used for backend routing, auth-service requests,
 vhost limits, pause controls and statistics. `MAP FARM`/`MAP BACKEND` must
@@ -203,7 +252,8 @@ Set it back with `LOG FILE 3` afterwards; level 5 (TRACE) can log credentials.
 
 | Level | Line starts with | Meaning |
 | --- | --- | --- |
-| INFO (3) | `Rewriting vhost '<client>' -> '<target>'` | Connection matched; `''` means the client sent an empty vhost |
+| INFO (3) | `Rewriting vhost '<client>' -> '<target>'` | Connection matched; `''` means the client sent an empty vhost; with a user map followed by `for user '<name>'` |
+| WARN (2) | `Refusing connection to vhost '<client>': amqpprox: no vhost mapping for user '<name>'` | User not in the user map and no `--rewriteVhostTo` default |
 | DEBUG (4) | `Converted Queue.Declare of '<queue>' on channel <n> to quorum` | Declaration rewritten |
 | DEBUG (4) | `Dropping classic-only argument <arg>` | Argument removed from a converted declaration |
 | DEBUG (4) | `Forwarding unconvertible declaration unchanged: <reason>` | Pass-through mode forwarded it as sent |
@@ -234,7 +284,8 @@ proxy.
 2. **Create the destination topology and permissions deliberately.** Grant the
    app's user only the destination vhost permissions it needs. No source `/`
    permission is needed after rewriting. Do not map different tenants' `/`
-   requests through one shared fixed mapping. Keep the control socket restricted.
+   requests through one shared fixed mapping; use the per-user vhost mapping
+   with one broker user per instance. Keep the control socket restricted.
 3. **Plan existing data migration.** Existing classic queues do not become quorum
    queues. Redeclaring one with rewritten type raises `406 PRECONDITION_FAILED`.
    Drain/move messages and recreate topology using a separate approved migration

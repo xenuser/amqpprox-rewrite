@@ -50,6 +50,7 @@ with your organization's existing RPM signing process.
 sudo dnf install ./build/rpmbuild/RPMS/$(uname -m)/amqpprox-rewrite-*.rpm
 sudoedit /etc/sysconfig/amqpprox-rewrite
 sudoedit /etc/amqpprox/control.conf
+sudoedit /etc/amqpprox/vhost-users.conf   # only for per-user vhost mapping
 sudo systemctl enable --now amqpprox-rewrite
 sudo systemctl status amqpprox-rewrite
 sudo journalctl -u amqpprox-rewrite

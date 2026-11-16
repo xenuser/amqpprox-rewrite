@@ -70,7 +70,19 @@ MODES = {
     'reject': (['--rewriteClassicQueuesToQuorum'], EXCLUSIVE, None),
     'passthrough': (['--rewriteClassicQueuesToQuorum', '--passThroughUnconvertibleQueues'],
                     EXCLUSIVE, declare('classic', 6, 'reply')),
+    'usermap': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), declare('quorum')),
+    'usermap-refused': (['--rewriteClassicQueuesToQuorum'], ('jobs', 2), None),
 }
+
+# --rewriteVhostUserMap files; the client logs in as user 'test'.
+USER_MAPS = {
+    'usermap': 'test VHOST3\nother VHOST4\n',
+    'usermap-refused': '# test is not mapped\nother VHOST4\n',
+}
+
+
+def target_vhost(mode):
+    return {'disabled': 'VHOST1', 'usermap': 'VHOST3'}.get(mode, 'VHOST2')
 
 
 def connect(port):
@@ -132,7 +144,10 @@ def smoke(binary, directory, tls=False, mode='convert'):
             reserve.bind(('127.0.0.1', 0)); proxy_port = reserve.getsockname()[1]
         sock = str(directory / 'control')
         command = [binary, '--controlSocket', sock, '--logDirectory', str(directory / 'logs')]
-        if rewrite:
+        if mode in USER_MAPS:
+            user_map = directory / 'vhost-users.conf'; user_map.write_text(USER_MAPS[mode])
+            command += ['--rewriteVhostFrom', 'VHOST1', '--rewriteVhostUserMap', str(user_map)] + MODES[mode][0]
+        elif rewrite:
             command += ['--rewriteVhostFrom', 'VHOST1', '--rewriteVhostTo', 'VHOST2'] + MODES[mode][0]
         cert = str(directory / 'cert.pem'); key = str(directory / 'key.pem')
         context = None
@@ -142,7 +157,8 @@ def smoke(binary, directory, tls=False, mode='convert'):
                             '-keyout', key, '-out', cert], check=True, capture_output=True)
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); context.load_cert_chain(cert, key)
         with open(directory / 'proxy.log', 'w') as log, concurrent.futures.ThreadPoolExecutor(1) as pool:
-            future = pool.submit(broker, listener, context, 'VHOST2' if rewrite else 'VHOST1', mode)
+            refused = mode == 'usermap-refused'
+            future = None if refused else pool.submit(broker, listener, context, target_vhost(mode), mode)
             process = subprocess.Popen(command, stdout=log, stderr=log)
             try:
                 spec = importlib.util.spec_from_file_location('config', pathlib.Path(__file__).resolve().parents[1] / 'packaging/rhel9/apply-config.py')
@@ -152,7 +168,7 @@ def smoke(binary, directory, tls=False, mode='convert'):
                     commands += [f'TLS INGRESS CERT_CHAIN_FILE {cert}', f'TLS INGRESS KEY_FILE {key}',
                                  f'TLS EGRESS CA_CERT_FILE {cert}', 'TLS EGRESS VERIFY_MODE PEER']
                 commands += [f'BACKEND ADD backend local 127.0.0.1 {backend_port}' + (' TLS' if tls else ''),
-                             'MAP BACKEND ' + ('VHOST2' if rewrite else 'VHOST1') + ' backend',
+                             'MAP BACKEND ' + target_vhost(mode) + ' backend',
                              'LISTEN ' + ('START_SECURE' if tls else 'START') + f' {proxy_port}']
                 # Exercise the packaged config parser as well as its socket client.
                 config = directory / 'control.conf'; config.write_text('\n'.join(commands) + '\n')
@@ -167,6 +183,24 @@ def smoke(binary, directory, tls=False, mode='convert'):
                     connection.sendall(frame(start_ok)); assert receive(connection)[2][:4] == TUNE[:4]
                     connection.sendall(frame(b'\x00\x0a\x00\x1f' + TUNE[4:]) +
                                        frame(b'\x00\x0a\x00\x28' + short('VHOST1') + b'\x00\x00'))
+                    if refused:
+                        # Unmapped user: Connection.Close 530 for Connection.Open,
+                        # and the proxy never connects to the broker.
+                        kind, channel, payload = receive(connection)
+                        assert (kind, channel, payload[:4]) == (1, 0, CLOSE), payload
+                        code, = struct.unpack('!H', payload[4:6])
+                        text = payload[7:7 + payload[6]]
+                        assert struct.unpack('!HH', payload[7 + payload[6]:]) == (10, 40), payload
+                        assert code == 530 and text == b"amqpprox: no vhost mapping for user 'test'", payload
+                        assert closed(connection)
+                        listener.settimeout(1)
+                        try:
+                            listener.accept()
+                            raise AssertionError('proxy connected to the broker for an unmapped user')
+                        except socket.timeout:
+                            pass
+                        print(f'PASS real proxy sockets: tls={tls}, mode={mode}')
+                        return
                     assert receive(connection)[2][:4] == b'\x00\x0a\x00\x29'
                     name, flags = MODES[mode][1]
                     data = (frame(b'', kind=8) + frame(declare('classic', flags, name), channel=7) +
@@ -205,7 +239,8 @@ def main():
     parser.add_argument('binary', help='Path to Linux amqpprox executable')
     args = parser.parse_args()
     cases = ((False, 'disabled'), (False, 'convert'), (True, 'convert'),
-             (False, 'reject'), (True, 'reject'), (False, 'passthrough'))
+             (False, 'reject'), (True, 'reject'), (False, 'passthrough'),
+             (False, 'usermap'), (True, 'usermap'), (False, 'usermap-refused'))
     for tls, mode in cases:
         with tempfile.TemporaryDirectory(prefix='amqpprox-wire-') as directory:
             smoke(str(pathlib.Path(args.binary).resolve()), pathlib.Path(directory), tls, mode)

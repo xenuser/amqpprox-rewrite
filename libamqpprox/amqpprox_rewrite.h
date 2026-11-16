@@ -4,8 +4,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iosfwd>
+#include <map>
+#include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Bloomberg {
@@ -13,16 +18,51 @@ namespace amqpprox {
 
 class Frame;
 
-// Immutable startup configuration. One tenant mapping per proxy process.
+// AMQP username -> destination vhost
+using UserVhostMap = std::map<std::string, std::string>;
+
+// Immutable startup configuration. Connections to the source vhost are
+// rewritten to the vhost mapped for their AMQP user, else to targetVhost.
 struct RewriteConfig {
     std::string sourceVhost = "/";
     std::string targetVhost;
     bool        quorumQueues = false;
     bool        passThroughUnconvertible = false;
+    std::shared_ptr<const UserVhostMap> userVhosts;
 
     void validate() const;
+
+    /**
+     * \return true if rewriting is configured and `vhost` is the source
+     * vhost (an empty vhost counts as "/")
+     */
     bool matches(const std::string &vhost) const;
+
+    /**
+     * \return the destination vhost for a matching connection of `user`:
+     * the user's mapped vhost, else targetVhost. Empty if neither applies,
+     * in which case the connection must be refused.
+     */
+    std::string targetFor(const std::optional<std::string> &user) const;
 };
+
+/**
+ * \brief Parse a user to vhost map: one `username vhost` pair per line,
+ * separated by whitespace. Blank lines and lines starting with '#' are
+ * ignored; Windows line endings are accepted.
+ *
+ * \throw std::invalid_argument naming the line for malformed lines,
+ * duplicate users and invalid vhost names
+ */
+UserVhostMap parseUserVhostMap(std::istream &input);
+
+/**
+ * \return the authentication identity of a SASL PLAIN response
+ * ("[authzid] NUL authcid NUL passwd"), or nullopt for other mechanisms and
+ * malformed responses. The password is never copied.
+ */
+std::optional<std::string> plainUsername(std::string_view mechanism,
+                                         std::string_view response);
 
 /**
  * \brief Raised when a Queue.Declare on a rewriting connection cannot be

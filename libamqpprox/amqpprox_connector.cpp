@@ -189,10 +189,31 @@ void Connector::receive(const Method &method, FlowType direction)
         decodeMethod(&d_open, method, methodPayload, direction);
 
         if (d_rewriteConfig.matches(d_open.virtualHost())) {
+            // Mapping by the username the client logs in with; the broker
+            // still authenticates it and checks its target vhost permissions.
+            const auto user =
+                plainUsername(d_startOk.mechanism(), d_startOk.response());
+            const auto target = d_rewriteConfig.targetFor(user);
+            if (target.empty()) {
+                const std::string reason =
+                    "amqpprox: no vhost mapping for user '" +
+                    user.value_or("") + "'";
+                LOG_WARN << "Refusing connection to vhost '"
+                         << d_open.virtualHost() << "': " << reason;
+                synthesizeCustomCloseError(true,
+                                           Reply::Codes::not_allowed,
+                                           reason,
+                                           methods::Open::classType(),
+                                           methods::Open::methodType());
+                d_state = State::ERROR;
+                return;
+            }
+
             // Quoted, so that an empty client vhost is visible in the log.
             LOG_INFO << "Rewriting vhost '" << d_open.virtualHost() << "' -> '"
-                     << d_rewriteConfig.targetVhost << "'";
-            d_open.setVirtualHost(d_rewriteConfig.targetVhost);
+                     << target << "'" << (user ? " for user '" + *user + "'"
+                                               : std::string());
+            d_open.setVirtualHost(target);
             d_rewriteQueues  = d_rewriteConfig.quorumQueues;
             d_vhostRewritten = true;
         }

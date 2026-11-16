@@ -5,6 +5,8 @@
 #include <amqpprox_logging.h>
 #include <amqpprox_reply.h>
 
+#include <istream>
+#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -160,6 +162,17 @@ std::string_view normalizeVhost(std::string_view vhost)
     return vhost.empty() ? std::string_view("/") : vhost;
 }
 
+bool validVhost(std::string_view vhost)
+{
+    return !vhost.empty() && vhost.size() <= 255 &&
+           vhost.find('\0') == std::string_view::npos;
+}
+
+bool hasUserVhosts(const RewriteConfig &config)
+{
+    return config.userVhosts && !config.userVhosts->empty();
+}
+
 }
 
 QueueRewriteError::QueueRewriteError(uint16_t replyCode, const std::string &text)
@@ -170,14 +183,13 @@ QueueRewriteError::QueueRewriteError(uint16_t replyCode, const std::string &text
 
 void RewriteConfig::validate() const
 {
-    auto valid = [](std::string_view s) {
-        return !s.empty() && s.size() <= 255 && s.find('\0') == std::string_view::npos;
-    };
-    if (!valid(normalizeVhost(sourceVhost)) || (!targetVhost.empty() && !valid(targetVhost)) ||
-        (quorumQueues && targetVhost.empty())) {
+    const bool rewriting = !targetVhost.empty() || hasUserVhosts(*this);
+    if (!validVhost(normalizeVhost(sourceVhost)) ||
+        (!targetVhost.empty() && !validVhost(targetVhost)) ||
+        (quorumQueues && !rewriting)) {
         throw std::invalid_argument(
             "Rewriting requires nonempty vhosts of at most 255 bytes; quorum "
-            "rewriting requires --rewriteVhostTo");
+            "rewriting requires --rewriteVhostTo or --rewriteVhostUserMap");
     }
     if (passThroughUnconvertible && !quorumQueues) {
         throw std::invalid_argument(
@@ -188,7 +200,68 @@ void RewriteConfig::validate() const
 
 bool RewriteConfig::matches(const std::string &vhost) const
 {
-    return !targetVhost.empty() && normalizeVhost(vhost) == normalizeVhost(sourceVhost);
+    return (!targetVhost.empty() || hasUserVhosts(*this)) &&
+           normalizeVhost(vhost) == normalizeVhost(sourceVhost);
+}
+
+std::string
+RewriteConfig::targetFor(const std::optional<std::string> &user) const
+{
+    if (user && userVhosts) {
+        const auto it = userVhosts->find(*user);
+        if (it != userVhosts->end()) {
+            return it->second;
+        }
+    }
+    return targetVhost;
+}
+
+UserVhostMap parseUserVhostMap(std::istream &input)
+{
+    UserVhostMap result;
+    std::string  line;
+    for (int number = 1; std::getline(input, line); ++number) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        std::istringstream tokens(line);
+        std::string        user, vhost, extra;
+        if (!(tokens >> user) || user[0] == '#') {
+            continue;
+        }
+        const std::string where = "User vhost map line " +
+                                  std::to_string(number) + ": ";
+        if (!(tokens >> vhost) || (tokens >> extra)) {
+            throw std::invalid_argument(where +
+                                        "expected 'username vhost'");
+        }
+        if (!validVhost(vhost)) {
+            throw std::invalid_argument(
+                where + "vhost must be 1 to 255 bytes without NUL");
+        }
+        if (!result.emplace(user, vhost).second) {
+            throw std::invalid_argument(where + "duplicate user '" + user +
+                                        "'");
+        }
+    }
+    return result;
+}
+
+std::optional<std::string> plainUsername(std::string_view mechanism,
+                                         std::string_view response)
+{
+    if (mechanism != "PLAIN") {
+        return std::nullopt;
+    }
+    const auto first = response.find('\0');
+    if (first == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const auto second = response.find('\0', first + 1);
+    if (second == std::string_view::npos || second == first + 1) {
+        return std::nullopt;
+    }
+    return std::string(response.substr(first + 1, second - first - 1));
 }
 
 std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,

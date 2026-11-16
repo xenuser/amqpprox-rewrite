@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <sstream>
 #include <stdexcept>
 
 namespace Bloomberg {
@@ -168,15 +169,25 @@ class Harness {
     Connector    connector;
     Bytes        outgoingHandshake;
 
-    Harness(RewriteConfig cfg      = {"/", "tenant/app", true},
-            std::string   vhost    = "/",
-            uint32_t      frameMax = FRAME_MAX)
+    // Logs in as `user` with SASL PLAIN when given. With `openOnly` the
+    // handshake stops after the client's Connection.Open.
+    Harness(RewriteConfig      cfg      = {"/", "tenant/app", true},
+            std::string        vhost    = "/",
+            uint32_t           frameMax = FRAME_MAX,
+            const std::string &user     = {},
+            bool               openOnly = false)
     : connector(&state, &events, &pool, "test", cfg)
     {
         connector.setConnectionCreationHandler([] {});
         connector.receive(Buffer(Constants::protocolHeader(),
                                  Constants::protocolHeaderLength()));
-        receive(connector, methods::StartOk(), FlowType::INGRESS);
+        methods::StartOk startOk;
+        if (!user.empty()) {
+            startOk.setAuthMechanism("PLAIN");
+            startOk.setCredentials(std::string(1, '\0') + user +
+                                   std::string(1, '\0') + "secret");
+        }
+        receive(connector, startOk, FlowType::INGRESS);
         Bytes tune{0, 10, 0, 31, 0, 0};
         u32(tune, frameMax);
         tune.push_back(0);
@@ -185,6 +196,9 @@ class Harness {
         methods::Open open;
         open.setVirtualHost(vhost);
         receive(connector, open, FlowType::INGRESS);
+        if (openOnly) {
+            return;
+        }
         receive(
             connector, ConnectorUtil::synthesizedStart(), FlowType::EGRESS);
         receive(connector, ConnectorUtil::synthesizedTune(), FlowType::EGRESS);
@@ -483,6 +497,143 @@ TEST(Rewrite, PassedThroughCloseIsRemembered)
         EXPECT_EQ(h.connector.state(), Connector::State::OPEN);
         EXPECT_TRUE(h.connector.closeHandshakeSeen());
     }
+}
+
+RewriteConfig userMapConfig(const std::string &defaultTarget = {})
+{
+    RewriteConfig cfg{"/", defaultTarget, true};
+    cfg.userVhosts = std::make_shared<const UserVhostMap>(
+        UserVhostMap{{"userA", "app1"}, {"userB", "app2"}});
+    return cfg;
+}
+
+TEST(Rewrite, ParseUserVhostMap)
+{
+    std::istringstream input("# legacy instances\r\n"
+                             "userA  app1\r\n"
+                             "\n"
+                             "   \t\n"
+                             "userB\tapp2   \n"
+                             "  #indented comment\n");
+    auto map = parseUserVhostMap(input);
+    EXPECT_EQ(map, (UserVhostMap{{"userA", "app1"}, {"userB", "app2"}}));
+
+    for (const char *bad :
+         {"userA\n", "userA app1 extra\n", "userA app1\nuserA app2\n"}) {
+        std::istringstream in(bad);
+        EXPECT_THROW(parseUserVhostMap(in), std::invalid_argument) << bad;
+    }
+
+    std::istringstream tooLong("userA " + std::string(256, 'v') + "\n");
+    EXPECT_THROW(parseUserVhostMap(tooLong), std::invalid_argument);
+
+    try {
+        std::istringstream duplicate("userA app1\n\nuserA app2\n");
+        parseUserVhostMap(duplicate);
+        ADD_FAILURE() << "expected duplicate rejection";
+    }
+    catch (const std::invalid_argument &error) {
+        EXPECT_NE(std::string(error.what()).find("line 3"), std::string::npos)
+            << error.what();
+    }
+}
+
+TEST(Rewrite, PlainUsername)
+{
+    using namespace std::string_literals;
+    EXPECT_EQ(plainUsername("PLAIN", "\0userA\0secret"s), "userA");
+    EXPECT_EQ(plainUsername("PLAIN", "authz\0userA\0secret"s), "userA");
+    EXPECT_EQ(plainUsername("PLAIN", "\0userA\0"s), "userA");
+    EXPECT_FALSE(plainUsername("PLAIN", "userA"s));
+    EXPECT_FALSE(plainUsername("PLAIN", "\0userA"s));
+    EXPECT_FALSE(plainUsername("PLAIN", "\0\0secret"s));
+    EXPECT_FALSE(plainUsername("AMQPLAIN", "\0userA\0secret"s));
+    EXPECT_FALSE(plainUsername("", ""));
+}
+
+TEST(Rewrite, UserMapTargets)
+{
+    auto cfg = userMapConfig();
+    EXPECT_NO_THROW(cfg.validate());
+    EXPECT_TRUE(cfg.matches("/"));
+    EXPECT_TRUE(cfg.matches(""));
+    EXPECT_FALSE(cfg.matches("app1"));
+    EXPECT_EQ(cfg.targetFor(std::string("userA")), "app1");
+    EXPECT_EQ(cfg.targetFor(std::string("userB")), "app2");
+    EXPECT_EQ(cfg.targetFor(std::string("userC")), "");
+    EXPECT_EQ(cfg.targetFor(std::nullopt), "");
+
+    // A default target catches unmapped users.
+    auto withDefault = userMapConfig("shared");
+    EXPECT_EQ(withDefault.targetFor(std::string("userA")), "app1");
+    EXPECT_EQ(withDefault.targetFor(std::string("userC")), "shared");
+    EXPECT_EQ(withDefault.targetFor(std::nullopt), "shared");
+
+    // Usernames are case-sensitive, like RabbitMQ's.
+    EXPECT_EQ(cfg.targetFor(std::string("usera")), "");
+}
+
+TEST(Rewrite, UserMapRoutesEachUserToItsVhost)
+{
+    for (auto [user, vhost] : {std::pair<std::string, std::string>{"userA", "app1"},
+                               {"userB", "app2"}}) {
+        Harness h(userMapConfig(), "/", FRAME_MAX, user);
+        ASSERT_EQ(h.connector.state(), Connector::State::OPEN) << user;
+        EXPECT_EQ(h.state.getVirtualHost(), vhost);
+        EXPECT_TRUE(h.connector.rewriteQueues());
+
+        // The broker receives the mapped vhost in Connection.Open.
+        const void *next = h.outgoingHandshake.data();
+        std::size_t left = h.outgoingHandshake.size();
+        Frame       f;
+        ASSERT_TRUE(Frame::decode(&f, &next, &left, next, left));  // tune-ok
+        ASSERT_TRUE(Frame::decode(&f, &next, &left, next, left));  // open
+        Method m;
+        ASSERT_TRUE(Method::decode(&m, f.payload, f.length));
+        methods::Open open;
+        Buffer        b(m.payload, m.length);
+        ASSERT_TRUE(methods::Open::decode(&open, b));
+        EXPECT_EQ(open.virtualHost(), vhost);
+    }
+}
+
+TEST(Rewrite, UserMapRefusesUnmappedUsers)
+{
+    for (const std::string user : {"userC", ""}) {
+        Harness h(userMapConfig(), "/", FRAME_MAX, user, true);
+        EXPECT_EQ(h.connector.state(), Connector::State::ERROR) << user;
+        EXPECT_TRUE(h.connector.sendToIngressSide());
+        auto close = decodeClose(h.connector.outBuffer());
+        EXPECT_EQ(close.replyCode(), Reply::Codes::not_allowed);
+        EXPECT_EQ(close.replyString(),
+                  "amqpprox: no vhost mapping for user '" + user + "'");
+        EXPECT_EQ(close.classId(), 10);
+        EXPECT_EQ(close.methodId(), 40);
+    }
+
+    // With a default target, unmapped users go there instead.
+    Harness h(userMapConfig("shared"), "/", FRAME_MAX, "userC");
+    ASSERT_EQ(h.connector.state(), Connector::State::OPEN);
+    EXPECT_EQ(h.state.getVirtualHost(), "shared");
+}
+
+TEST(Rewrite, UserMapLeavesOtherVhostsAlone)
+{
+    // A mapped user connecting to a different vhost is not rewritten.
+    Harness h(userMapConfig(), "other", FRAME_MAX, "userA");
+    ASSERT_EQ(h.connector.state(), Connector::State::OPEN);
+    EXPECT_EQ(h.state.getVirtualHost(), "other");
+    EXPECT_FALSE(h.connector.vhostRewritten());
+}
+
+TEST(Rewrite, UserMapConfigurationValidation)
+{
+    RewriteConfig quorumWithoutTarget{"/", "", true};
+    EXPECT_THROW(quorumWithoutTarget.validate(), std::invalid_argument);
+    auto cfg = userMapConfig();
+    EXPECT_NO_THROW(cfg.validate());
+    cfg.userVhosts = std::make_shared<const UserVhostMap>();
+    EXPECT_THROW(cfg.validate(), std::invalid_argument);
 }
 
 TEST(Rewrite, CustomSourceAndVhostOnlyMode)

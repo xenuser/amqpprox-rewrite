@@ -11,7 +11,9 @@ See [MODIFICATIONS.md](MODIFICATIONS.md) for the complete file-by-file change re
 
 This fork adds opt-in rewriting for legacy AMQP 0.9.1 clients:
 
-- Translate an exact client vhost (including hard-coded `/`) to a destination vhost.
+- Translate an exact client vhost (including hard-coded `/`) to a destination vhost,
+  either one for all connections or one per AMQP user from a config file
+  (`--rewriteVhostUserMap`), so instances that all use `/` stay separated.
 - Replace explicit `x-queue-type=classic`, or inject a missing type, with `quorum`
   for compatible active declarations on matching connections.
 - Use the existing AMQP or AMQPS ingress/egress support and backend load balancing.
@@ -28,7 +30,7 @@ conversion; classic-only tuning such as `x-queue-mode=lazy` is dropped. Other
 declarations are refused with an AMQP `Connection.Close` (code 540) naming the
 reason, or forwarded unchanged with `--passThroughUnconvertibleQueues`.
 Existing queues/messages are not migrated. All rewriting is disabled by default;
-one source-to-destination mapping is supported per proxy process.
+one source vhost is supported per proxy process.
 
 Read the [migration guide and considerations](docs/legacy-rewrite.md), including
 AMQPS configuration and the inherited outbound TLS hostname/SNI limitation.

@@ -43,6 +43,7 @@ DESTDIR=%{buildroot} %{cmake_binary} --install rpm-build --component amqpprox
 install -D -m 0644 packaging/rhel9/amqpprox-rewrite.service %{buildroot}%{_unitdir}/amqpprox-rewrite.service
 install -D -m 0640 packaging/rhel9/amqpprox-rewrite.sysconfig %{buildroot}%{_sysconfdir}/sysconfig/amqpprox-rewrite
 install -D -m 0640 packaging/rhel9/control.conf %{buildroot}%{_sysconfdir}/amqpprox/control.conf
+install -D -m 0640 packaging/rhel9/vhost-users.conf %{buildroot}%{_sysconfdir}/amqpprox/vhost-users.conf
 install -D -m 0755 packaging/rhel9/apply-config.py %{buildroot}%{_libexecdir}/amqpprox-apply-config
 install -d -m 0750 %{buildroot}%{_localstatedir}/log/amqpprox
 
@@ -69,4 +70,5 @@ getent passwd amqpprox >/dev/null || useradd -r -g amqpprox -d / -s /sbin/nologi
 %config(noreplace) %attr(0640,root,amqpprox) %{_sysconfdir}/sysconfig/amqpprox-rewrite
 %dir %attr(0750,root,amqpprox) %{_sysconfdir}/amqpprox
 %config(noreplace) %attr(0640,root,amqpprox) %{_sysconfdir}/amqpprox/control.conf
+%config(noreplace) %attr(0640,root,amqpprox) %{_sysconfdir}/amqpprox/vhost-users.conf
 %dir %attr(0750,amqpprox,amqpprox) %{_localstatedir}/log/amqpprox

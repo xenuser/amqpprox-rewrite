@@ -66,6 +66,7 @@
 #include <boost/program_options/value_semantic.hpp>
 #include <boost/program_options/variables_map.hpp>
 
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -89,6 +90,7 @@ int main(int argc, char *argv[])
     namespace po = boost::program_options;
 
     RewriteConfig rewriteConfig;
+    std::string userVhostMapFile;
     std::string logDirectory;
     std::string controlSocket;
     uint32_t    cleanupIntervalMs;
@@ -125,7 +127,13 @@ int main(int argc, char *argv[])
         "vhost is treated as /")(
         "rewriteVhostTo",
         po::value<std::string>(&rewriteConfig.targetVhost),
-        "Destination vhost; routing/auth/limits use this name")(
+        "Destination vhost; routing/auth/limits use this name. With "
+        "rewriteVhostUserMap: destination for users not in the map")(
+        "rewriteVhostUserMap",
+        po::value<std::string>(&userVhostMapFile),
+        "File of 'username vhost' lines: rewrite each user's connections to "
+        "its own destination vhost; unmapped users get rewriteVhostTo, or are "
+        "refused without it")(
         "rewriteClassicQueuesToQuorum",
         po::bool_switch(&rewriteConfig.quorumQueues),
         "Rewrite missing/classic queue types for matching connections only")(
@@ -177,11 +185,33 @@ int main(int argc, char *argv[])
     }
 
     try {
+        if (variablesMap.count("rewriteVhostUserMap")) {
+            std::ifstream input(userVhostMapFile);
+            if (!input) {
+                throw std::invalid_argument(
+                    "Cannot read --rewriteVhostUserMap file '" +
+                    userVhostMapFile + "'");
+            }
+            auto userVhosts = parseUserVhostMap(input);
+            if (userVhosts.empty()) {
+                throw std::invalid_argument("--rewriteVhostUserMap file '" +
+                                            userVhostMapFile +
+                                            "' contains no mappings");
+            }
+            rewriteConfig.userVhosts =
+                std::make_shared<const UserVhostMap>(std::move(userVhosts));
+        }
         rewriteConfig.validate();
-        if ((variablesMap.count("rewriteVhostFrom") && !variablesMap["rewriteVhostFrom"].defaulted()) ||
-            variablesMap.count("rewriteVhostTo")) {
-            if (rewriteConfig.targetVhost.empty())
-                throw std::invalid_argument("--rewriteVhostTo must be nonempty");
+        if (variablesMap.count("rewriteVhostTo") &&
+            rewriteConfig.targetVhost.empty()) {
+            throw std::invalid_argument("--rewriteVhostTo must be nonempty");
+        }
+        if (variablesMap.count("rewriteVhostFrom") &&
+            !variablesMap["rewriteVhostFrom"].defaulted() &&
+            !rewriteConfig.matches(rewriteConfig.sourceVhost)) {
+            throw std::invalid_argument(
+                "--rewriteVhostFrom requires --rewriteVhostTo or "
+                "--rewriteVhostUserMap");
         }
     }
     catch (const std::invalid_argument &e) {
@@ -193,6 +223,11 @@ int main(int argc, char *argv[])
 
     std::cout << "Starting amqpprox, logging to: '" << logDirectory
               << "' control using: '" << controlSocket << "'" << std::endl;
+    if (rewriteConfig.userVhosts) {
+        std::cout << "Loaded " << rewriteConfig.userVhosts->size()
+                  << " user vhost mappings from '" << userVhostMapFile << "'"
+                  << std::endl;
+    }
 
     // Remove the control channel if it already existed, for example in the
     // case of a crashed process or machine
