@@ -5,6 +5,7 @@
 #include <amqpprox_logging.h>
 #include <amqpprox_reply.h>
 
+#include <string_view>
 #include <utility>
 
 namespace Bloomberg {
@@ -154,6 +155,11 @@ void put32(std::vector<uint8_t> &out, uint32_t value)
     }
 }
 
+std::string_view normalizeVhost(std::string_view vhost)
+{
+    return vhost.empty() ? std::string_view("/") : vhost;
+}
+
 }
 
 QueueRewriteError::QueueRewriteError(uint16_t replyCode, const std::string &text)
@@ -164,10 +170,10 @@ QueueRewriteError::QueueRewriteError(uint16_t replyCode, const std::string &text
 
 void RewriteConfig::validate() const
 {
-    auto valid = [](const std::string &s) {
-        return !s.empty() && s.size() <= 255 && s.find('\0') == std::string::npos;
+    auto valid = [](std::string_view s) {
+        return !s.empty() && s.size() <= 255 && s.find('\0') == std::string_view::npos;
     };
-    if (!valid(sourceVhost) || (!targetVhost.empty() && !valid(targetVhost)) ||
+    if (!valid(normalizeVhost(sourceVhost)) || (!targetVhost.empty() && !valid(targetVhost)) ||
         (quorumQueues && targetVhost.empty())) {
         throw std::invalid_argument(
             "Rewriting requires nonempty vhosts of at most 255 bytes; quorum "
@@ -182,7 +188,7 @@ void RewriteConfig::validate() const
 
 bool RewriteConfig::matches(const std::string &vhost) const
 {
-    return !targetVhost.empty() && vhost == sourceVhost;
+    return !targetVhost.empty() && normalizeVhost(vhost) == normalizeVhost(sourceVhost);
 }
 
 std::vector<uint8_t> rewriteQueueDeclare(const Frame &frame,
